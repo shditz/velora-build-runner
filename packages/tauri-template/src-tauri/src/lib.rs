@@ -183,6 +183,24 @@ struct MetadataConfig {
 #[derive(Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
+struct DevicePermissionsConfig {
+    #[serde(default = "default_true")]
+    storage: bool,
+    #[serde(default)]
+    camera: bool,
+    #[serde(default)]
+    microphone: bool,
+    #[serde(default)]
+    geolocation: bool,
+    #[serde(default = "default_true")]
+    notifications: bool,
+    #[serde(default = "default_true")]
+    external_app_schemes: bool,
+}
+
+#[derive(Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct TrayMenuItemConfig {
     label: String,
     action: String,
@@ -227,6 +245,8 @@ struct VeloraConfig {
     precache_assets: Vec<String>,
     #[serde(default = "default_true")]
     show_network_status_banner: bool,
+    #[serde(default)]
+    device_permissions: DevicePermissionsConfig,
 }
 
 fn is_domain_allowed(nav_url: &Url, main_host: &str, allowed: &[String]) -> bool {
@@ -896,10 +916,14 @@ pub fn run() {
                 let main_host_clone = main_host.clone();
                 let allowed_domains_clone = allowed_domains.clone();
                 let sandbox_links = config.sandbox_external_links;
+                let allow_external_schemes = config.device_permissions.external_app_schemes;
+                let allow_storage = config.device_permissions.storage;
                 wb = wb.on_navigation(move |url| {
                     let scheme = url.scheme().to_lowercase();
                     if scheme == "tel" || scheme == "mailto" || scheme == "sms" || scheme == "whatsapp" || scheme == "intent" || scheme == "market" {
-                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                        if allow_external_schemes {
+                            let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                        }
                         return false;
                     }
 
@@ -918,7 +942,9 @@ pub fn run() {
 
                     #[cfg(mobile)]
                     if is_download_asset {
-                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                        if allow_storage {
+                            let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                        }
                         return false;
                     }
 

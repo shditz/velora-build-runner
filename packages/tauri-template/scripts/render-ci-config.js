@@ -767,6 +767,14 @@ async function main() {
       copyright: payload.copyright || payload.metadata?.copyright || "",
       companyName: payload.companyName || payload.metadata?.companyName || "",
     },
+    devicePermissions: payload.devicePermissions || payload.appConfig?.devicePermissions || {
+      storage: true,
+      camera: false,
+      microphone: false,
+      geolocation: false,
+      notifications: true,
+      externalAppSchemes: true,
+    },
   };
 
   const veloraConfigPath = path.join(srcTauriDir, "velora-config.json");
