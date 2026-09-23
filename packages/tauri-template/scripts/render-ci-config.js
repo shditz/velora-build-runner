@@ -1193,6 +1193,14 @@ async function main() {
               );
             }
 
+            // Universal Bluetooth permissions for Web Bluetooth & direct thermal POS printers
+            permissions.push(
+              "android.permission.BLUETOOTH",
+              "android.permission.BLUETOOTH_ADMIN",
+              "android.permission.BLUETOOTH_CONNECT",
+              "android.permission.BLUETOOTH_SCAN",
+            );
+
             for (const perm of permissions) {
               if (!manifest.includes(`android:name="${perm}"`)) {
                 manifest = manifest.replace(
@@ -1200,6 +1208,24 @@ async function main() {
                   `    <uses-permission android:name="${perm}" />\n</manifest>`,
                 );
               }
+            }
+
+            if (!manifest.includes("<queries>")) {
+              const queriesBlock = `    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/pdf" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="rawbt" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="printer" />
+        </intent>
+    </queries>\n</manifest>`;
+              manifest = manifest.replace("</manifest>", queriesBlock);
             }
 
             if (devPerms.camera && !manifest.includes('android.hardware.camera')) {
@@ -1230,7 +1256,7 @@ async function main() {
 
             fs.writeFileSync(manifestPath, manifest, "utf8");
             console.log(
-              "[RenderConfig] Hardened AndroidManifest.xml (cleartextTraffic, hardwareAccelerated, network/notification permissions, adjustResize)",
+              "[RenderConfig] Hardened AndroidManifest.xml (cleartextTraffic, hardwareAccelerated, network/bluetooth/notification permissions, queries, adjustResize)",
             );
           } catch (err) {
             console.warn(
@@ -1385,6 +1411,84 @@ async function main() {
                 fs.writeFileSync(mainActivityPath, mainActivityContent, "utf8");
                 console.log(
                   `[RenderConfig] Patched MainActivity.kt (injected onCreate) with WindowInsets listener at ${path.relative(templateRoot, mainActivityPath)}`,
+                );
+              }
+            }
+
+            if (!mainActivityContent.includes("onWebViewCreate")) {
+              const printHookSnippet = `
+  override fun onWebViewCreate(webView: android.webkit.WebView) {
+    super.onWebViewCreate(webView)
+    try {
+      class VeloraPrintInterface(private val activity: MainActivity, private val mainWv: android.webkit.WebView) {
+        @android.webkit.JavascriptInterface
+        fun print(jobName: String?, htmlContent: String?) {
+          activity.runOnUiThread {
+            try {
+              val printManager = activity.getSystemService(android.content.Context.PRINT_SERVICE) as? android.print.PrintManager ?: return@runOnUiThread
+              val title = if (!jobName.isNullOrBlank()) jobName else (activity.title?.toString() ?: "Document")
+              if (!htmlContent.isNullOrBlank()) {
+                val printWebView = android.webkit.WebView(activity)
+                printWebView.settings.javaScriptEnabled = true
+                printWebView.webViewClient = object : android.webkit.WebViewClient() {
+                  override fun onPageFinished(v: android.webkit.WebView?, u: String?) {
+                    val adapter = printWebView.createPrintDocumentAdapter(title)
+                    printManager.print(title, adapter, android.print.PrintAttributes.Builder().build())
+                  }
+                }
+                printWebView.loadDataWithBaseURL(mainWv.url, htmlContent, "text/html", "UTF-8", null)
+              } else {
+                val adapter = mainWv.createPrintDocumentAdapter(title)
+                printManager.print(title, adapter, android.print.PrintAttributes.Builder().build())
+              }
+            } catch (e: Exception) {
+              android.util.Log.e("VeloraPrint", "Print error: " + e.message)
+            }
+          }
+        }
+      }
+      webView.addJavascriptInterface(VeloraPrintInterface(this, webView), "__VELORA_NATIVE_PRINT__")
+
+      webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
+        try {
+          val uri = android.net.Uri.parse(url)
+          val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            if (!mimeType.isNullOrBlank()) {
+              setDataAndType(uri, mimeType)
+            } else {
+              data = uri
+            }
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          startActivity(viewIntent)
+        } catch (e: Exception) {
+          try {
+            val dmRequest = android.app.DownloadManager.Request(android.net.Uri.parse(url)).apply {
+              setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+              val fname = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
+              setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fname)
+            }
+            val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
+            dm?.enqueue(dmRequest)
+          } catch (e2: Exception) {
+            android.util.Log.e("VeloraDownload", "Download error: " + e2.message)
+          }
+        }
+      }
+    } catch (e: Exception) {
+      android.util.Log.w("Velora", "Failed to register WebView hooks: " + e.message)
+    }
+  }
+`;
+              const lastBraceIndex = mainActivityContent.lastIndexOf("}");
+              if (lastBraceIndex !== -1) {
+                mainActivityContent =
+                  mainActivityContent.slice(0, lastBraceIndex) +
+                  printHookSnippet +
+                  "\n}\n";
+                fs.writeFileSync(mainActivityPath, mainActivityContent, "utf8");
+                console.log(
+                  `[RenderConfig] Patched MainActivity.kt with onWebViewCreate native print & download bridge at ${path.relative(templateRoot, mainActivityPath)}`,
                 );
               }
             }

@@ -780,6 +780,84 @@ fn android_navigation_script() -> String {
     )
 }
 
+fn android_print_script() -> String {
+    String::from(
+        r#"(function(){
+  if(window.__VELORA_PRINT_BRIDGE__) return;
+  window.__VELORA_PRINT_BRIDGE__ = true;
+
+  function getNativeBridge() {
+    if (window.__VELORA_NATIVE_PRINT__ && typeof window.__VELORA_NATIVE_PRINT__.print === 'function') {
+      return window.__VELORA_NATIVE_PRINT__;
+    }
+    try {
+      if (window.parent && window.parent.__VELORA_NATIVE_PRINT__ && typeof window.parent.__VELORA_NATIVE_PRINT__.print === 'function') {
+        return window.parent.__VELORA_NATIVE_PRINT__;
+      }
+    } catch(e) {}
+    try {
+      if (window.top && window.top.__VELORA_NATIVE_PRINT__ && typeof window.top.__VELORA_NATIVE_PRINT__.print === 'function') {
+        return window.top.__VELORA_NATIVE_PRINT__;
+      }
+    } catch(e) {}
+    return null;
+  }
+
+  function dispatchNativePrint(targetWin) {
+    var bridge = getNativeBridge();
+    if (bridge) {
+      try {
+        var doc = (targetWin && targetWin.document) || document;
+        var title = (doc && doc.title) || document.title || 'Document';
+        var isSubframe = targetWin && targetWin !== window;
+        var html = (isSubframe && doc && doc.documentElement) ? doc.documentElement.outerHTML : null;
+        try { window.dispatchEvent(new Event('beforeprint')); } catch(e) {}
+        bridge.print(title, html);
+        setTimeout(function() {
+          try { window.dispatchEvent(new Event('afterprint')); } catch(e) {}
+        }, 1000);
+        return true;
+      } catch(err) {
+        console.warn('[Velora] Native print dispatch error:', err);
+      }
+    }
+    return false;
+  }
+
+  var origPrint = window.print;
+  window.print = function() {
+    if (dispatchNativePrint(window)) return;
+    if (typeof origPrint === 'function') {
+      try { origPrint.apply(window, arguments); } catch(e) {}
+    }
+  };
+
+  try {
+    var origCreateElement = document.createElement;
+    document.createElement = function(tagName, options) {
+      var el = origCreateElement.call(document, tagName, options);
+      if (el && tagName && typeof tagName === 'string' && tagName.toLowerCase() === 'iframe') {
+        el.addEventListener('load', function() {
+          try {
+            if (el.contentWindow) {
+              var iframeOrigPrint = el.contentWindow.print;
+              el.contentWindow.print = function() {
+                if (dispatchNativePrint(el.contentWindow)) return;
+                if (typeof iframeOrigPrint === 'function') {
+                  iframeOrigPrint.apply(el.contentWindow, arguments);
+                }
+              };
+            }
+          } catch(e) {}
+        });
+      }
+      return el;
+    };
+  } catch(e) {}
+})()"#,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let config: VeloraConfig =
@@ -831,6 +909,7 @@ pub fn run() {
     }
 
     scripts.push(android_navigation_script());
+    scripts.push(android_print_script());
 
     let combined_script = scripts.join("\n");
 
