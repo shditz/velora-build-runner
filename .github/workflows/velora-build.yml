@@ -105,10 +105,11 @@ jobs:
           }
           $sha256 = (Get-FileHash -Path $artifact.FullName -Algorithm SHA256).Hash.ToLower()
           $filename = $artifact.Name
+          $encodedFilename = [System.Uri]::EscapeDataString($filename)
           $fileSize = $artifact.Length
 
           try {
-            $presignedUrl = "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$filename"
+            $presignedUrl = "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$encodedFilename"
             $uploadData = curl.exe -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "$presignedUrl"
             $presignedRes = $uploadData | ConvertFrom-Json -ErrorAction Stop
             if ($presignedRes.uploadUrl) {
@@ -194,12 +195,21 @@ jobs:
       - name: Upload Artifact Callback
         if: success()
         run: |
-          DMG_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/dmg -name "*.dmg" | head -n 1)
+          DMG_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -n 1)
+          if [ -z "$DMG_FILE" ]; then
+            DMG_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle -name "*.dmg" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$DMG_FILE" ]; then
+            echo "Error: No macOS DMG file found."
+            exit 1
+          fi
+
           SHA256=$(shasum -a 256 "$DMG_FILE" | awk '{print $1}')
           FILENAME=$(basename "$DMG_FILE")
+          ENCODED_FILENAME=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$FILENAME")
           FILESIZE=$(stat -f%z "$DMG_FILE" 2>/dev/null || wc -c < "$DMG_FILE" | tr -d ' ')
 
-          UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$FILENAME")
+          UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$ENCODED_FILENAME")
           UPLOAD_URL=$(node -e "try { console.log(JSON.parse(process.argv[1]).uploadUrl || '') } catch { console.log('') }" "$UPLOAD_DATA")
           STORAGE_KEY=$(node -e "try { console.log(JSON.parse(process.argv[1]).storageKey || '') } catch { console.log('') }" "$UPLOAD_DATA")
 
@@ -217,7 +227,7 @@ jobs:
               -F "platform=macos" \
               -F "status=COMPLETED" \
               -F "sha256=$SHA256" \
-              -F "artifact=@$DMG_FILE"
+              -F "artifact=@$DMG_FILE;filename=$FILENAME"
           fi
 
       - name: Report Build Failure Callback
@@ -279,17 +289,32 @@ jobs:
       - name: Upload Artifact Callback
         if: success()
         run: |
-          DEB_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/deb -name "*.deb" | head -n 1)
+          DEB_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/deb -name "*.deb" 2>/dev/null | head -n 1)
+          if [ -z "$DEB_FILE" ]; then
+            DEB_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle -name "*.deb" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$DEB_FILE" ]; then
+            DEB_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/appimage -name "*.AppImage" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$DEB_FILE" ]; then
+            DEB_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle -name "*.AppImage" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$DEB_FILE" ]; then
+            echo "Error: No Linux deb or AppImage artifact found."
+            exit 1
+          fi
+
           SHA256=$(sha256sum "$DEB_FILE" | awk '{print $1}')
           FILENAME=$(basename "$DEB_FILE")
+          ENCODED_FILENAME=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$FILENAME")
           FILESIZE=$(stat -c%s "$DEB_FILE" 2>/dev/null || wc -c < "$DEB_FILE" | tr -d ' ')
 
-          UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$FILENAME")
+          UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$ENCODED_FILENAME")
           UPLOAD_URL=$(node -e "try { console.log(JSON.parse(process.argv[1]).uploadUrl || '') } catch { console.log('') }" "$UPLOAD_DATA")
           STORAGE_KEY=$(node -e "try { console.log(JSON.parse(process.argv[1]).storageKey || '') } catch { console.log('') }" "$UPLOAD_DATA")
 
           if [ -n "$UPLOAD_URL" ] && [ "$UPLOAD_URL" != "null" ]; then
-            echo "Uploading Linux DEB directly to S3 via presigned PUT ($FILESIZE bytes)..."
+            echo "Uploading Linux artifact directly to S3 via presigned PUT ($FILESIZE bytes)..."
             curl -s -S -X PUT -T "$DEB_FILE" -H "Content-Type: application/vnd.debian.binary-package" "$UPLOAD_URL"
             BODY=$(node -e "console.log(JSON.stringify({ build_id: '${{ inputs.build_id }}', project_id: '${{ inputs.project_id }}', platform: 'linux', status: 'COMPLETED', sha256: process.argv[1], storage_key: process.argv[2], filename: process.argv[3], size: Number(process.argv[4]) }))" "$SHA256" "$STORAGE_KEY" "$FILENAME" "$FILESIZE")
             curl -s -S -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$BODY"
@@ -302,7 +327,7 @@ jobs:
               -F "platform=linux" \
               -F "status=COMPLETED" \
               -F "sha256=$SHA256" \
-              -F "artifact=@$DEB_FILE"
+              -F "artifact=@$DEB_FILE;filename=$FILENAME"
           fi
 
       - name: Report Build Failure Callback
@@ -463,9 +488,10 @@ jobs:
           fi
           SHA256=$(sha256sum "$APK_FILE" | awk '{print $1}')
           FILENAME=$(basename "$APK_FILE")
+          ENCODED_FILENAME=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$FILENAME")
           FILESIZE=$(stat -c%s "$APK_FILE" 2>/dev/null || wc -c < "$APK_FILE" | tr -d ' ')
 
-          UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$FILENAME")
+          UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$ENCODED_FILENAME")
           UPLOAD_URL=$(node -e "try { console.log(JSON.parse(process.argv[1]).uploadUrl || '') } catch { console.log('') }" "$UPLOAD_DATA")
           STORAGE_KEY=$(node -e "try { console.log(JSON.parse(process.argv[1]).storageKey || '') } catch { console.log('') }" "$UPLOAD_DATA")
 
