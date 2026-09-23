@@ -897,6 +897,12 @@ pub fn run() {
                 let allowed_domains_clone = allowed_domains.clone();
                 let sandbox_links = config.sandbox_external_links;
                 wb = wb.on_navigation(move |url| {
+                    let scheme = url.scheme().to_lowercase();
+                    if scheme == "tel" || scheme == "mailto" || scheme == "sms" || scheme == "whatsapp" || scheme == "intent" || scheme == "market" {
+                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                        return false;
+                    }
+
                     let path = url.path().to_lowercase();
                     let is_download_asset = path.ends_with(".pdf")
                         || path.ends_with(".docx")
@@ -907,7 +913,8 @@ pub fn run() {
                         || path.ends_with(".rar")
                         || path.ends_with(".apk")
                         || path.ends_with(".csv")
-                        || url.as_str().contains("/storage/v1/object/");
+                        || url.as_str().contains("/storage/v1/object/")
+                        || url.query().map_or(false, |q| q.contains("download=true"));
 
                     #[cfg(mobile)]
                     if is_download_asset {

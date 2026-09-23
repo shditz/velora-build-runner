@@ -832,6 +832,21 @@ async function main() {
       conf.bundle.windows.nsis.installerIcon = "icons/icon.ico";
       conf.bundle.windows.nsis.uninstallerIcon = "icons/icon.ico";
 
+      const devPerms = payload.devicePermissions || payload.appConfig?.devicePermissions || {};
+      if (devPerms.camera || devPerms.microphone || devPerms.geolocation) {
+        if (!conf.bundle.macOS) conf.bundle.macOS = {};
+        if (!conf.bundle.macOS.infoPlist) conf.bundle.macOS.infoPlist = {};
+        if (devPerms.camera) {
+          conf.bundle.macOS.infoPlist.NSCameraUsageDescription = `${appName} requires camera access.`;
+        }
+        if (devPerms.microphone) {
+          conf.bundle.macOS.infoPlist.NSMicrophoneUsageDescription = `${appName} requires microphone access.`;
+        }
+        if (devPerms.geolocation) {
+          conf.bundle.macOS.infoPlist.NSLocationWhenInUseUsageDescription = `${appName} requires location access.`;
+        }
+      }
+
       fs.writeFileSync(tauriConfPath, JSON.stringify(conf, null, 2), "utf8");
       console.log(
         `[RenderConfig] Updated tauri.conf.json productName: "${appName}", mainBinaryName: "${safeBinaryName}", version: "${version}", identifier: "${bundleId}"`,
@@ -1139,11 +1154,37 @@ async function main() {
               );
             }
 
+            const devPerms =
+              payload.devicePermissions ||
+              payload.appConfig?.devicePermissions ||
+              {};
             const permissions = [
               "android.permission.INTERNET",
               "android.permission.ACCESS_NETWORK_STATE",
-              "android.permission.POST_NOTIFICATIONS",
             ];
+            if (devPerms.storage !== false) {
+              permissions.push(
+                "android.permission.READ_EXTERNAL_STORAGE",
+                "android.permission.WRITE_EXTERNAL_STORAGE",
+              );
+            }
+            if (devPerms.notifications !== false) {
+              permissions.push("android.permission.POST_NOTIFICATIONS");
+            }
+            if (devPerms.camera) {
+              permissions.push("android.permission.CAMERA");
+            }
+            if (devPerms.microphone) {
+              permissions.push("android.permission.RECORD_AUDIO");
+              permissions.push("android.permission.MODIFY_AUDIO_SETTINGS");
+            }
+            if (devPerms.geolocation) {
+              permissions.push(
+                "android.permission.ACCESS_FINE_LOCATION",
+                "android.permission.ACCESS_COARSE_LOCATION",
+              );
+            }
+
             for (const perm of permissions) {
               if (!manifest.includes(`android:name="${perm}"`)) {
                 manifest = manifest.replace(
@@ -1151,6 +1192,25 @@ async function main() {
                   `    <uses-permission android:name="${perm}" />\n</manifest>`,
                 );
               }
+            }
+
+            if (devPerms.camera && !manifest.includes('android.hardware.camera')) {
+              manifest = manifest.replace(
+                "</manifest>",
+                `    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>`,
+              );
+            }
+            if (devPerms.microphone && !manifest.includes('android.hardware.microphone')) {
+              manifest = manifest.replace(
+                "</manifest>",
+                `    <uses-feature android:name="android.hardware.microphone" android:required="false" />\n</manifest>`,
+              );
+            }
+            if (devPerms.geolocation && !manifest.includes('android.hardware.location.gps')) {
+              manifest = manifest.replace(
+                "</manifest>",
+                `    <uses-feature android:name="android.hardware.location.gps" android:required="false" />\n</manifest>`,
+              );
             }
 
             if (!manifest.includes("android:windowSoftInputMode")) {
