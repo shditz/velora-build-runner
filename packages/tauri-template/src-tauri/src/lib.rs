@@ -824,6 +824,18 @@ fn android_print_script() -> String {
     return false;
   }
 
+  function hookIframeWindow(win) {
+    if (!win || win.__VELORA_PRINT_HOOKED__) return;
+    win.__VELORA_PRINT_HOOKED__ = true;
+    var orig = win.print;
+    win.print = function() {
+      if (dispatchNativePrint(win)) return;
+      if (typeof orig === 'function') {
+        try { orig.apply(win, arguments); } catch(e) {}
+      }
+    };
+  }
+
   var origPrint = window.print;
   window.print = function() {
     if (dispatchNativePrint(window)) return;
@@ -833,26 +845,55 @@ fn android_print_script() -> String {
   };
 
   try {
+    var desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+    if (desc && desc.get) {
+      var origGet = desc.get;
+      Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+        get: function() {
+          var w = origGet.call(this);
+          try { hookIframeWindow(w); } catch(e) {}
+          return w;
+        },
+        configurable: true,
+        enumerable: true
+      });
+    }
+  } catch(e) {}
+
+  try {
+    var docDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentDocument');
+    if (docDesc && docDesc.get) {
+      var origDocGet = docDesc.get;
+      Object.defineProperty(HTMLIFrameElement.prototype, 'contentDocument', {
+        get: function() {
+          var d = origDocGet.call(this);
+          try { if (d && d.defaultView) hookIframeWindow(d.defaultView); } catch(e) {}
+          return d;
+        },
+        configurable: true,
+        enumerable: true
+      });
+    }
+  } catch(e) {}
+
+  try {
     var origCreateElement = document.createElement;
     document.createElement = function(tagName, options) {
       var el = origCreateElement.call(document, tagName, options);
       if (el && tagName && typeof tagName === 'string' && tagName.toLowerCase() === 'iframe') {
         el.addEventListener('load', function() {
-          try {
-            if (el.contentWindow) {
-              var iframeOrigPrint = el.contentWindow.print;
-              el.contentWindow.print = function() {
-                if (dispatchNativePrint(el.contentWindow)) return;
-                if (typeof iframeOrigPrint === 'function') {
-                  iframeOrigPrint.apply(el.contentWindow, arguments);
-                }
-              };
-            }
-          } catch(e) {}
+          try { hookIframeWindow(el.contentWindow); } catch(e) {}
         });
       }
       return el;
     };
+  } catch(e) {}
+
+  try {
+    var existingIframes = document.querySelectorAll('iframe');
+    for (var i = 0; i < existingIframes.length; i++) {
+      try { hookIframeWindow(existingIframes[i].contentWindow); } catch(e) {}
+    }
   } catch(e) {}
 })()"#,
     )
@@ -996,10 +1037,20 @@ pub fn run() {
                 let allowed_domains_clone = allowed_domains.clone();
                 let sandbox_links = config.sandbox_external_links;
                 let allow_external_schemes = config.device_permissions.external_app_schemes;
-                let allow_storage = config.device_permissions.storage;
+                let _allow_storage = config.device_permissions.storage;
                 wb = wb.on_navigation(move |url| {
                     let scheme = url.scheme().to_lowercase();
-                    if scheme == "tel" || scheme == "mailto" || scheme == "sms" || scheme == "whatsapp" || scheme == "intent" || scheme == "market" {
+                    if scheme == "tel"
+                        || scheme == "mailto"
+                        || scheme == "sms"
+                        || scheme == "whatsapp"
+                        || scheme == "intent"
+                        || scheme == "market"
+                        || scheme == "rawbt"
+                        || scheme == "printer"
+                        || scheme == "escpos"
+                        || scheme == "quickprinter"
+                    {
                         if allow_external_schemes {
                             let _ = handle.opener().open_url(url.as_str(), None::<&str>);
                         }
@@ -1021,9 +1072,7 @@ pub fn run() {
 
                     #[cfg(mobile)]
                     if is_download_asset {
-                        if allow_storage {
-                            let _ = handle.opener().open_url(url.as_str(), None::<&str>);
-                        }
+                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
                         return false;
                     }
 

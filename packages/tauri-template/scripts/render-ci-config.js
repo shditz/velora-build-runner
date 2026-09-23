@@ -1224,6 +1224,14 @@ async function main() {
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="printer" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="escpos" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="quickprinter" />
+        </intent>
     </queries>\n</manifest>`;
               manifest = manifest.replace("</manifest>", queriesBlock);
             }
@@ -1362,6 +1370,15 @@ async function main() {
         for (const mainActivityPath of mainActivityFiles) {
           try {
             let mainActivityContent = fs.readFileSync(mainActivityPath, "utf8");
+
+            // Normalize classes defined without body braces: class MainActivity : TauriActivity()
+            if (!mainActivityContent.includes("{")) {
+              mainActivityContent = mainActivityContent.replace(
+                /class\s+MainActivity[^\n\r{]*/,
+                (match) => `${match} {\n}\n`,
+              );
+            }
+
             if (
               !mainActivityContent.includes("setOnApplyWindowInsetsListener")
             ) {
@@ -1417,67 +1434,157 @@ async function main() {
 
             if (!mainActivityContent.includes("onWebViewCreate")) {
               const printHookSnippet = `
+  private var activePrintWebView: android.webkit.WebView? = null
+
+  private fun saveBytesAndNotify(bytes: ByteArray, fileName: String, mimeType: String) {
+    try {
+      val resolver = contentResolver
+      var fileUri: android.net.Uri? = null
+      val finalMime = if (!mimeType.isNullOrBlank() && mimeType != "application/octet-stream") mimeType else "application/pdf"
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        val cv = android.content.ContentValues().apply {
+          put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+          put(android.provider.MediaStore.MediaColumns.MIME_TYPE, finalMime)
+          put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+        }
+        val inserted = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+        if (inserted != null) {
+          resolver.openOutputStream(inserted)?.use { it.write(bytes) }
+          fileUri = inserted
+        }
+      } else {
+        val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        if (!dir.exists()) dir.mkdirs()
+        val dest = java.io.File(dir, fileName)
+        java.io.FileOutputStream(dest).use { it.write(bytes) }
+        fileUri = android.net.Uri.fromFile(dest)
+      }
+      android.widget.Toast.makeText(this, "Saved: " + fileName, android.widget.Toast.LENGTH_SHORT).show()
+      if (fileUri != null) {
+        try {
+          val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(fileUri, finalMime)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          startActivity(viewIntent)
+        } catch (e: Exception) {}
+      }
+    } catch (e: Exception) {
+      android.util.Log.e("VeloraDownload", "Save error: " + e.message)
+    }
+  }
+
+  @androidx.annotation.Keep
+  inner class VeloraPrintInterface(private val mainWv: android.webkit.WebView) {
+    @android.webkit.JavascriptInterface
+    fun print(jobName: String?, htmlContent: String?) {
+      this@MainActivity.runOnUiThread {
+        try {
+          val printManager = this@MainActivity.getSystemService(android.content.Context.PRINT_SERVICE) as? android.print.PrintManager ?: return@runOnUiThread
+          val title = if (!jobName.isNullOrBlank()) jobName else (this@MainActivity.title?.toString() ?: "Document")
+          if (!htmlContent.isNullOrBlank()) {
+            val printWebView = android.webkit.WebView(this@MainActivity)
+            printWebView.settings.javaScriptEnabled = true
+            activePrintWebView = printWebView
+            var isPrinted = false
+            printWebView.webViewClient = object : android.webkit.WebViewClient() {
+              override fun onPageFinished(v: android.webkit.WebView?, u: String?) {
+                if (isPrinted) return
+                isPrinted = true
+                val adapter = printWebView.createPrintDocumentAdapter(title)
+                printManager.print(title, adapter, android.print.PrintAttributes.Builder().build())
+              }
+            }
+            printWebView.loadDataWithBaseURL(mainWv.url, htmlContent, "text/html", "UTF-8", null)
+          } else {
+            val adapter = mainWv.createPrintDocumentAdapter(title)
+            printManager.print(title, adapter, android.print.PrintAttributes.Builder().build())
+          }
+        } catch (e: Exception) {
+          android.util.Log.e("VeloraPrint", "Print error: " + e.message)
+        }
+      }
+    }
+
+    @android.webkit.JavascriptInterface
+    fun saveBlob(dataUrl: String?, contentDisposition: String?, mimeType: String?) {
+      this@MainActivity.runOnUiThread {
+        try {
+          if (dataUrl.isNullOrBlank()) return@runOnUiThread
+          val commaIndex = dataUrl.indexOf(",")
+          if (commaIndex == -1) return@runOnUiThread
+          val base64Str = dataUrl.substring(commaIndex + 1)
+          val bytes = android.util.Base64.decode(base64Str, android.util.Base64.DEFAULT)
+          val fname = android.webkit.URLUtil.guessFileName("file://blob", contentDisposition, mimeType)
+          saveBytesAndNotify(bytes, fname, mimeType ?: "application/pdf")
+        } catch (e: Exception) {
+          android.util.Log.e("VeloraDownload", "Save blob error: " + e.message)
+        }
+      }
+    }
+  }
+
   override fun onWebViewCreate(webView: android.webkit.WebView) {
     super.onWebViewCreate(webView)
     try {
-      class VeloraPrintInterface(private val activity: MainActivity, private val mainWv: android.webkit.WebView) {
-        @android.webkit.JavascriptInterface
-        fun print(jobName: String?, htmlContent: String?) {
-          activity.runOnUiThread {
-            try {
-              val printManager = activity.getSystemService(android.content.Context.PRINT_SERVICE) as? android.print.PrintManager ?: return@runOnUiThread
-              val title = if (!jobName.isNullOrBlank()) jobName else (activity.title?.toString() ?: "Document")
-              if (!htmlContent.isNullOrBlank()) {
-                val printWebView = android.webkit.WebView(activity)
-                printWebView.settings.javaScriptEnabled = true
-                printWebView.webViewClient = object : android.webkit.WebViewClient() {
-                  override fun onPageFinished(v: android.webkit.WebView?, u: String?) {
-                    val adapter = printWebView.createPrintDocumentAdapter(title)
-                    printManager.print(title, adapter, android.print.PrintAttributes.Builder().build())
-                  }
-                }
-                printWebView.loadDataWithBaseURL(mainWv.url, htmlContent, "text/html", "UTF-8", null)
-              } else {
-                val adapter = mainWv.createPrintDocumentAdapter(title)
-                printManager.print(title, adapter, android.print.PrintAttributes.Builder().build())
-              }
-            } catch (e: Exception) {
-              android.util.Log.e("VeloraPrint", "Print error: " + e.message)
-            }
-          }
-        }
-      }
-      webView.addJavascriptInterface(VeloraPrintInterface(this, webView), "__VELORA_NATIVE_PRINT__")
+      webView.addJavascriptInterface(VeloraPrintInterface(webView), "__VELORA_NATIVE_PRINT__")
 
       webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
         try {
           val uri = android.net.Uri.parse(url)
-          val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-            if (!mimeType.isNullOrBlank()) {
-              setDataAndType(uri, mimeType)
-            } else {
-              data = uri
+          val scheme = uri.scheme?.lowercase() ?: ""
+          if (scheme == "http" || scheme == "https") {
+            try {
+              val dmRequest = android.app.DownloadManager.Request(uri).apply {
+                val cookie = android.webkit.CookieManager.getInstance().getCookie(url)
+                if (!cookie.isNullOrBlank()) {
+                  addRequestHeader("Cookie", cookie)
+                }
+                if (!userAgent.isNullOrBlank()) {
+                  addRequestHeader("User-Agent", userAgent)
+                }
+                setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                val fname = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
+                setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fname)
+              }
+              val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
+              dm?.enqueue(dmRequest)
+              android.widget.Toast.makeText(this, "Downloading...", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+              val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              startActivity(viewIntent)
             }
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-          }
-          startActivity(viewIntent)
-        } catch (e: Exception) {
-          try {
-            val dmRequest = android.app.DownloadManager.Request(android.net.Uri.parse(url)).apply {
-              setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+          } else if (scheme == "data") {
+            val commaIndex = url.indexOf(",")
+            if (commaIndex != -1) {
+              val bytes = android.util.Base64.decode(url.substring(commaIndex + 1), android.util.Base64.DEFAULT)
               val fname = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
-              setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fname)
+              saveBytesAndNotify(bytes, fname, mimeType ?: "application/octet-stream")
             }
-            val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
-            dm?.enqueue(dmRequest)
-          } catch (e2: Exception) {
-            android.util.Log.e("VeloraDownload", "Download error: " + e2.message)
+          } else if (scheme == "blob") {
+            val escapedUrl = url.replace("'", "\\\\'")
+            val escapedCd = (contentDisposition ?: "").replace("'", "\\\\'")
+            val escapedMt = (mimeType ?: "").replace("'", "\\\\'")
+            val js = "(function(){try{function send(b){var r=new FileReader();r.onloadend=function(){if(window.__VELORA_NATIVE_PRINT__&&window.__VELORA_NATIVE_PRINT__.saveBlob){window.__VELORA_NATIVE_PRINT__.saveBlob(r.result,'" + escapedCd + "','" + escapedMt + "');}};r.readAsDataURL(b);}if(typeof fetch==='function'){fetch('" + escapedUrl + "').then(function(res){return res.blob();}).then(send).catch(function(){useXhr();});}else{useXhr();}function useXhr(){var x=new XMLHttpRequest();x.open('GET','" + escapedUrl + "',true);x.responseType='blob';x.onload=function(){if(this.status===200||this.status===0){send(this.response);}};x.send();}}catch(e){}})();"
+            webView.evaluateJavascript(js, null)
           }
+        } catch (e: Exception) {
+          android.util.Log.e("VeloraDownload", "Download error: " + e.message)
         }
       }
     } catch (e: Exception) {
       android.util.Log.w("Velora", "Failed to register WebView hooks: " + e.message)
     }
+  }
+
+  override fun onDestroy() {
+    try {
+      activePrintWebView?.destroy()
+      activePrintWebView = null
+    } catch (e: Exception) {}
+    super.onDestroy()
   }
 `;
               const lastBraceIndex = mainActivityContent.lastIndexOf("}");
