@@ -1,0 +1,13 @@
+{
+  "name": "velora-build-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "pnpm --filter @velora/tauri-template check"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

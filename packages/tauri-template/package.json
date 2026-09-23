@@ -1,0 +1,20 @@
+{
+  "name": "@velora/tauri-template",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standardized Tauri 2 project template used by the Velora build worker. Not executed directly — copied and parameterized per build job.",
+  "scripts": {
+    "tauri": "tauri",
+    "check": "node scripts/validate-template.js",
+    "test": "node scripts/validate-template.js",
+    "icons:generate": "node scripts/generate-icons.js"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/pngjs": "^6.0.5"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "identifier": "default",
+  "description": "Default capability for the Velora-generated application",
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:webview:default",
+    "opener:default",
+    "notification:default",
+    "core:window:allow-set-badge-count",
+    "core:window:allow-set-badge-label"
+  ]
+}

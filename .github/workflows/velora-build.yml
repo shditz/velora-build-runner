@@ -1,0 +1,495 @@
+name: Velora Native Multi-OS Build Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: 'Velora Build ID'
+        required: true
+        type: string
+      project_id:
+        description: 'Velora Project ID'
+        required: true
+        type: string
+      platform:
+        description: 'Target Platform (windows | macos | linux | android)'
+        required: true
+        type: choice
+        options:
+          - windows
+          - macos
+          - linux
+          - android
+      config_json:
+        description: 'Base64 encoded build configuration'
+        required: true
+        type: string
+      callback_url:
+        description: 'Webhook callback endpoint URL'
+        required: true
+        type: string
+      callback_secret:
+        description: 'Webhook authorization secret'
+        required: true
+        type: string
+
+jobs:
+  # Windows Runner (.exe / .msi)
+  build-windows:
+    if: inputs.platform == 'windows'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/tauri-template/src-tauri
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Decode & Render Project Config
+        shell: pwsh
+        env:
+          CONFIG_JSON_BASE64: ${{ inputs.config_json }}
+          BUILD_PLATFORM: ${{ inputs.platform }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: |
+          node packages/tauri-template/scripts/render-ci-config.js
+          $injectPayload = @{
+            build_id = "${{ inputs.build_id }}"
+            project_id = "${{ inputs.project_id }}"
+            platform = "windows"
+            status = "INJECTING"
+          } | ConvertTo-Json -Compress
+          curl.exe -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$injectPayload" || true
+
+      - name: Compile Native Windows Package
+        working-directory: packages/tauri-template
+        shell: pwsh
+        run: |
+          $compilePayload = @{
+            build_id = "${{ inputs.build_id }}"
+            project_id = "${{ inputs.project_id }}"
+            platform = "windows"
+            status = "COMPILING"
+          } | ConvertTo-Json -Compress
+          curl.exe -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$compilePayload" || true
+          npx --yes @tauri-apps/cli@^2 build --bundles nsis,msi
+
+      - name: Upload Artifact Callback
+        if: success()
+        shell: pwsh
+        run: |
+          $artifact = Get-ChildItem -Path "packages/tauri-template/src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          if (-not $artifact) {
+            $artifact = Get-ChildItem -Path "packages/tauri-template/src-tauri/target/release/*.exe" | Select-Object -First 1
+          }
+          $sha256 = (Get-FileHash -Path $artifact.FullName -Algorithm SHA256).Hash.ToLower()
+          $filename = $artifact.Name
+          $fileSize = $artifact.Length
+
+          try {
+            $presignedUrl = "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$filename"
+            $uploadData = curl.exe -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "$presignedUrl"
+            $presignedRes = $uploadData | ConvertFrom-Json -ErrorAction Stop
+            if ($presignedRes.uploadUrl) {
+              Write-Host "Uploading Windows artifact directly to S3 via presigned URL ($fileSize bytes)..."
+              curl.exe -s -S -X PUT -T "$($artifact.FullName)" -H "Content-Type: application/octet-stream" "$($presignedRes.uploadUrl)"
+              $postBody = @{
+                build_id = "${{ inputs.build_id }}"
+                project_id = "${{ inputs.project_id }}"
+                platform = "windows"
+                status = "COMPLETED"
+                sha256 = $sha256
+                storage_key = $presignedRes.storageKey
+                filename = $filename
+                size = $fileSize
+              } | ConvertTo-Json
+              curl.exe -s -S -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$postBody"
+              return
+            }
+          } catch {
+            Write-Host "Presigned upload skipped, falling back to multipart: $_"
+          }
+
+          curl.exe -s -S -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "x-velora-secret: ${{ inputs.callback_secret }}" -F "build_id=${{ inputs.build_id }}" -F "project_id=${{ inputs.project_id }}" -F "platform=windows" -F "status=COMPLETED" -F "sha256=$sha256" -F "artifact=@$($artifact.FullName)"
+
+      - name: Report Build Failure Callback
+        if: failure()
+        shell: pwsh
+        run: |
+          $body = @{
+            build_id = "${{ inputs.build_id }}"
+            project_id = "${{ inputs.project_id }}"
+            platform = "windows"
+            status = "FAILED"
+            error = "Native Windows compilation encountered a packaging error. Please verify your project configuration."
+          } | ConvertTo-Json
+          curl.exe -s -S -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$body"
+
+  # macOS Runner (.dmg Universal / Apple Silicon)
+  build-macos:
+    if: inputs.platform == 'macos'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/tauri-template/src-tauri
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Decode & Render Project Config
+        env:
+          CONFIG_JSON_BASE64: ${{ inputs.config_json }}
+          BUILD_PLATFORM: ${{ inputs.platform }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: node packages/tauri-template/scripts/render-ci-config.js
+
+      - name: Compile Native macOS Binary (.dmg)
+        working-directory: packages/tauri-template
+        run: |
+          curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d '{"build_id":"${{ inputs.build_id }}","project_id":"${{ inputs.project_id }}","platform":"macos","status":"COMPILING"}' || true
+          npx --yes @tauri-apps/cli@^2 build --bundles dmg
+
+      - name: Upload Artifact Callback
+        if: success()
+        run: |
+          DMG_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/dmg -name "*.dmg" | head -n 1)
+          SHA256=$(shasum -a 256 "$DMG_FILE" | awk '{print $1}')
+          FILENAME=$(basename "$DMG_FILE")
+          FILESIZE=$(stat -f%z "$DMG_FILE" 2>/dev/null || wc -c < "$DMG_FILE" | tr -d ' ')
+
+          UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$FILENAME")
+          UPLOAD_URL=$(node -e "try { console.log(JSON.parse(process.argv[1]).uploadUrl || '') } catch { console.log('') }" "$UPLOAD_DATA")
+          STORAGE_KEY=$(node -e "try { console.log(JSON.parse(process.argv[1]).storageKey || '') } catch { console.log('') }" "$UPLOAD_DATA")
+
+          if [ -n "$UPLOAD_URL" ] && [ "$UPLOAD_URL" != "null" ]; then
+            echo "Uploading macOS DMG directly to S3 via presigned PUT ($FILESIZE bytes)..."
+            curl -s -S -X PUT -T "$DMG_FILE" -H "Content-Type: application/octet-stream" "$UPLOAD_URL"
+            BODY=$(node -e "console.log(JSON.stringify({ build_id: '${{ inputs.build_id }}', project_id: '${{ inputs.project_id }}', platform: 'macos', status: 'COMPLETED', sha256: process.argv[1], storage_key: process.argv[2], filename: process.argv[3], size: Number(process.argv[4]) }))" "$SHA256" "$STORAGE_KEY" "$FILENAME" "$FILESIZE")
+            curl -s -S -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$BODY"
+          else
+            echo "Presigned URL not available, falling back to multipart..."
+            curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" \
+              -H "x-velora-secret: ${{ inputs.callback_secret }}" \
+              -F "build_id=${{ inputs.build_id }}" \
+              -F "project_id=${{ inputs.project_id }}" \
+              -F "platform=macos" \
+              -F "status=COMPLETED" \
+              -F "sha256=$SHA256" \
+              -F "artifact=@$DMG_FILE"
+          fi
+
+      - name: Report Build Failure Callback
+        if: failure()
+        run: |
+          curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "x-velora-secret: ${{ inputs.callback_secret }}" \
+            -d '{"build_id":"${{ inputs.build_id }}","project_id":"${{ inputs.project_id }}","platform":"macos","status":"FAILED","error":"Native macOS compilation encountered a packaging error. Please verify your project configuration."}'
+
+  # Linux Runner (.deb / .AppImage)
+  build-linux:
+    if: inputs.platform == 'linux'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install WebKit & Native Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/tauri-template/src-tauri
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Decode & Render Project Config
+        env:
+          CONFIG_JSON_BASE64: ${{ inputs.config_json }}
+          BUILD_PLATFORM: ${{ inputs.platform }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: node packages/tauri-template/scripts/render-ci-config.js
+
+      - name: Compile Native Linux Package (.deb)
+        working-directory: packages/tauri-template
+        run: |
+          curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d '{"build_id":"${{ inputs.build_id }}","project_id":"${{ inputs.project_id }}","platform":"linux","status":"COMPILING"}' || true
+          npx --yes @tauri-apps/cli@^2 build --bundles deb,appimage
+
+      - name: Upload Artifact Callback
+        if: success()
+        run: |
+          DEB_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/deb -name "*.deb" | head -n 1)
+          SHA256=$(sha256sum "$DEB_FILE" | awk '{print $1}')
+          FILENAME=$(basename "$DEB_FILE")
+          FILESIZE=$(stat -c%s "$DEB_FILE" 2>/dev/null || wc -c < "$DEB_FILE" | tr -d ' ')
+
+          UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$FILENAME")
+          UPLOAD_URL=$(node -e "try { console.log(JSON.parse(process.argv[1]).uploadUrl || '') } catch { console.log('') }" "$UPLOAD_DATA")
+          STORAGE_KEY=$(node -e "try { console.log(JSON.parse(process.argv[1]).storageKey || '') } catch { console.log('') }" "$UPLOAD_DATA")
+
+          if [ -n "$UPLOAD_URL" ] && [ "$UPLOAD_URL" != "null" ]; then
+            echo "Uploading Linux DEB directly to S3 via presigned PUT ($FILESIZE bytes)..."
+            curl -s -S -X PUT -T "$DEB_FILE" -H "Content-Type: application/vnd.debian.binary-package" "$UPLOAD_URL"
+            BODY=$(node -e "console.log(JSON.stringify({ build_id: '${{ inputs.build_id }}', project_id: '${{ inputs.project_id }}', platform: 'linux', status: 'COMPLETED', sha256: process.argv[1], storage_key: process.argv[2], filename: process.argv[3], size: Number(process.argv[4]) }))" "$SHA256" "$STORAGE_KEY" "$FILENAME" "$FILESIZE")
+            curl -s -S -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$BODY"
+          else
+            echo "Presigned URL not available, falling back to multipart..."
+            curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" \
+              -H "x-velora-secret: ${{ inputs.callback_secret }}" \
+              -F "build_id=${{ inputs.build_id }}" \
+              -F "project_id=${{ inputs.project_id }}" \
+              -F "platform=linux" \
+              -F "status=COMPLETED" \
+              -F "sha256=$SHA256" \
+              -F "artifact=@$DEB_FILE"
+          fi
+
+      - name: Report Build Failure Callback
+        if: failure()
+        run: |
+          curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "x-velora-secret: ${{ inputs.callback_secret }}" \
+            -d '{"build_id":"${{ inputs.build_id }}","project_id":"${{ inputs.project_id }}","platform":"linux","status":"FAILED","error":"Native Linux compilation encountered a packaging error. Please verify your project configuration."}'
+
+  # Android Runner (.apk)
+  build-android:
+    if: inputs.platform == 'android'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK & NDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          if [ -d "$ANDROID_HOME/ndk" ]; then
+            NDK_PATH=$(find $ANDROID_HOME/ndk -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+            if [ -n "$NDK_PATH" ]; then
+              echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+              echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+            fi
+          fi
+          # Accept licenses automatically with preinstalled sdkmanager
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/tauri-template/src-tauri
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Decode & Render Project Config
+        env:
+          CONFIG_JSON_BASE64: ${{ inputs.config_json }}
+          BUILD_PLATFORM: ${{ inputs.platform }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: node packages/tauri-template/scripts/render-ci-config.js
+
+      - name: Compile Android APK Release
+        working-directory: packages/tauri-template
+        env:
+          CONFIG_JSON_BASE64: ${{ inputs.config_json }}
+          BUILD_PLATFORM: ${{ inputs.platform }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: |
+          curl -s -L -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d '{"build_id":"${{ inputs.build_id }}","project_id":"${{ inputs.project_id }}","platform":"android","status":"COMPILING"}' || true
+          if [ ! -d "src-tauri/gen/android" ]; then
+            npx --yes @tauri-apps/cli@^2 android init
+          fi
+          node scripts/render-ci-config.js
+          npx --yes @tauri-apps/cli@^2 android build --apk
+
+      - name: Sign Android APK with Release Keystore
+        working-directory: packages/tauri-template
+        env:
+          CONFIG_JSON_BASE64: ${{ inputs.config_json }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          CALLBACK_SECRET: ${{ inputs.callback_secret }}
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: |
+          BUILD_TOOLS_DIR=$(find $ANDROID_HOME/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          echo "Using Android Build Tools: $BUILD_TOOLS_DIR"
+
+          UNSIGNED_APK=$(find src-tauri/gen/android -name "*unsigned*.apk" 2>/dev/null | head -n 1)
+          if [ -z "$UNSIGNED_APK" ]; then
+            UNSIGNED_APK=$(find src-tauri/gen/android -name "*.apk" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$UNSIGNED_APK" ]; then
+            echo "Error: No APK file found to sign."
+            exit 1
+          fi
+
+          echo "Checking for existing persistent project release keystore..."
+          KEYSTORE_FILE="velora-release.keystore"
+          KEYSTORE_FOUND="false"
+
+          if [ -n "$CALLBACK_URL" ] && [ -n "$PROJECT_ID" ]; then
+            KEYSTORE_RES=$(curl -s -H "x-velora-secret: $CALLBACK_SECRET" "$CALLBACK_URL?action=get_keystore&project_id=$PROJECT_ID")
+            KEYSTORE_URL=$(node -e "try { console.log(JSON.parse(process.argv[1]).keystoreUrl || '') } catch { console.log('') }" "$KEYSTORE_RES")
+            if [ -n "$KEYSTORE_URL" ] && [ "$KEYSTORE_URL" != "null" ]; then
+              echo "Downloading persistent project keystore from storage..."
+              if curl -s -f "$KEYSTORE_URL" -o "$KEYSTORE_FILE"; then
+                echo "Successfully retrieved existing keystore for project $PROJECT_ID."
+                KEYSTORE_FOUND="true"
+              fi
+            fi
+          fi
+
+          if [ "$KEYSTORE_FOUND" != "true" ]; then
+            echo "Generating new persistent release signing key for project $PROJECT_ID..."
+            keytool -genkeypair -v -keystore "$KEYSTORE_FILE" -alias velora -keyalg RSA -keysize 2048 -validity 10000 -storepass velora123 -keypass velora123 -dname "CN=Velora, OU=Packaging, O=Velora, C=ID"
+
+            if [ -n "$CALLBACK_URL" ] && [ -n "$PROJECT_ID" ]; then
+              UPLOAD_RES=$(curl -s -H "x-velora-secret: $CALLBACK_SECRET" "$CALLBACK_URL?action=get_keystore_upload_url&project_id=$PROJECT_ID")
+              UPLOAD_URL=$(node -e "try { console.log(JSON.parse(process.argv[1]).uploadUrl || '') } catch { console.log('') }" "$UPLOAD_RES")
+              if [ -n "$UPLOAD_URL" ] && [ "$UPLOAD_URL" != "null" ]; then
+                echo "Saving new persistent keystore to project storage for future updates..."
+                curl -s -S -X PUT -T "$KEYSTORE_FILE" -H "Content-Type: application/octet-stream" "$UPLOAD_URL" || true
+              fi
+            fi
+          fi
+
+          echo "Aligning APK..."
+          $BUILD_TOOLS_DIR/zipalign -f -p 4 "$UNSIGNED_APK" aligned-app.apk
+
+          APP_NAME=$(node -e "try { const c = JSON.parse(Buffer.from(process.env.CONFIG_JSON_BASE64, 'base64').toString('utf8')); console.log((c.appName || c.name || 'App').replace(/[^a-zA-Z0-9_-]/g, '')); } catch { console.log('App'); }" 2>/dev/null || echo "App")
+          if [ -z "$APP_NAME" ]; then APP_NAME="App"; fi
+          FINAL_APK="src-tauri/gen/android/${APP_NAME}.apk"
+
+          echo "Signing APK with apksigner (v1, v2, v3 schemes) -> $FINAL_APK..."
+          $BUILD_TOOLS_DIR/apksigner sign --ks "$KEYSTORE_FILE" --ks-pass pass:velora123 --key-pass pass:velora123 --out "$FINAL_APK" aligned-app.apk
+
+          echo "Verifying signed APK..."
+          $BUILD_TOOLS_DIR/apksigner verify --verbose "$FINAL_APK"
+          echo "Signed APK ready: $FINAL_APK"
+
+      - name: Upload Artifact Callback
+        if: success()
+        run: |
+          APK_FILE=$(find packages/tauri-template/src-tauri/gen/android -name "*.apk" ! -name "*unsigned*" ! -name "aligned*" 2>/dev/null | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find packages/tauri-template/src-tauri/gen/android -name "*.apk" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$APK_FILE" ]; then
+            echo "Error: No APK file generated."
+            exit 1
+          fi
+          SHA256=$(sha256sum "$APK_FILE" | awk '{print $1}')
+          FILENAME=$(basename "$APK_FILE")
+          FILESIZE=$(stat -c%s "$APK_FILE" 2>/dev/null || wc -c < "$APK_FILE" | tr -d ' ')
+
+          UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$FILENAME")
+          UPLOAD_URL=$(node -e "try { console.log(JSON.parse(process.argv[1]).uploadUrl || '') } catch { console.log('') }" "$UPLOAD_DATA")
+          STORAGE_KEY=$(node -e "try { console.log(JSON.parse(process.argv[1]).storageKey || '') } catch { console.log('') }" "$UPLOAD_DATA")
+
+          if [ -n "$UPLOAD_URL" ] && [ "$UPLOAD_URL" != "null" ]; then
+            echo "Uploading Android APK directly to S3 via presigned PUT ($FILESIZE bytes)..."
+            curl -s -S -X PUT -T "$APK_FILE" -H "Content-Type: application/vnd.android.package-archive" "$UPLOAD_URL"
+            BODY=$(node -e "console.log(JSON.stringify({ build_id: '${{ inputs.build_id }}', project_id: '${{ inputs.project_id }}', platform: 'android', status: 'COMPLETED', sha256: process.argv[1], storage_key: process.argv[2], filename: process.argv[3], size: Number(process.argv[4]) }))" "$SHA256" "$STORAGE_KEY" "$FILENAME" "$FILESIZE")
+            curl -s -S -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$BODY"
+          else
+            echo "Presigned URL not available, falling back to multipart..."
+            curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" \
+              -H "x-velora-secret: ${{ inputs.callback_secret }}" \
+              -F "build_id=${{ inputs.build_id }}" \
+              -F "project_id=${{ inputs.project_id }}" \
+              -F "platform=android" \
+              -F "status=COMPLETED" \
+              -F "sha256=$SHA256" \
+              -F "artifact=@$APK_FILE;filename=$FILENAME"
+          fi
+
+      - name: Report Build Failure Callback
+        if: failure()
+        run: |
+          curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "x-velora-secret: ${{ inputs.callback_secret }}" \
+            -d '{"build_id":"${{ inputs.build_id }}","project_id":"${{ inputs.project_id }}","platform":"android","status":"FAILED","error":"Native Android compilation encountered a packaging error. Please verify your project configuration."}'
