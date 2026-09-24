@@ -277,10 +277,16 @@ fn is_domain_allowed(nav_url: &Url, main_host: &str, allowed: &[String]) -> bool
     }
 
     for domain in allowed {
-        let d = domain.trim();
+        let mut d = domain.trim();
         if d.is_empty() {
             continue;
         }
+        if let Some(stripped) = d.strip_prefix("https://") {
+            d = stripped;
+        } else if let Some(stripped) = d.strip_prefix("http://") {
+            d = stripped;
+        }
+        d = d.trim_end_matches('/');
         let stripped_d = d.strip_prefix("*.").unwrap_or(d).strip_prefix("www.").unwrap_or(d);
         if stripped_nav == stripped_d || stripped_nav.ends_with(&format!(".{}", stripped_d)) {
             return true;
@@ -485,7 +491,6 @@ fn offline_detection_script(offline: &OfflineConfig) -> String {
     if(o){{ o.remove(); o = null; location.reload(); }}
   }}
 
-  // Intercept any link clicks while offline so WebView2 does not navigate to a dead network and trigger the Edge ERR_INTERNET_DISCONNECTED error screen
   document.addEventListener("click", function(e){{
     if(!navigator.onLine){{
       var a = e.target && e.target.closest ? e.target.closest("a") : null;
@@ -738,6 +743,8 @@ fn android_navigation_script() -> String {
     String::from(
         r#"(function(){
   if(window.__VELORA_ANDROID_BRIDGE__) return;
+  var isAndroid = /Android/i.test(navigator.userAgent) || Boolean(window.__VELORA_NATIVE_PRINT__);
+  if (!isAndroid) return;
   window.__VELORA_ANDROID_BRIDGE__ = true;
 
   window.addEventListener("popstate", function(){});
@@ -770,6 +777,78 @@ fn android_navigation_script() -> String {
       }
     } catch(e) {}
   }
+
+  function isDownloadUrl(u) {
+    if (!u || typeof u !== 'string') return false;
+    var clean = u.split('?')[0].split('#')[0].toLowerCase();
+    var lower = u.toLowerCase();
+    return clean.endsWith('.pdf') || clean.endsWith('.docx') || clean.endsWith('.doc') ||
+      clean.endsWith('.xlsx') || clean.endsWith('.xls') || clean.endsWith('.zip') ||
+      clean.endsWith('.rar') || clean.endsWith('.apk') || clean.endsWith('.csv') ||
+      clean.endsWith('.mp3') || clean.endsWith('.mp4') ||
+      lower.includes('/storage/v1/object/') || lower.includes('download=true') ||
+      lower.includes('response-content-disposition=attachment');
+  }
+
+  function handleExternalOrDownload(url) {
+    if (!url || typeof url !== 'string') return false;
+    var nativeBridge = window.__VELORA_NATIVE_PRINT__;
+    var lower = url.toLowerCase();
+
+    if (lower.startsWith('whatsapp:') || lower.startsWith('intent:') || lower.startsWith('tel:') ||
+        lower.startsWith('mailto:') || lower.startsWith('sms:') || lower.startsWith('market:') ||
+        lower.startsWith('rawbt:') || lower.startsWith('printer:') || lower.startsWith('escpos:') ||
+        lower.startsWith('quickprinter:')) {
+      if (nativeBridge && typeof nativeBridge.openExternal === 'function') {
+        nativeBridge.openExternal(url);
+        return true;
+      }
+      return false;
+    }
+
+    if (lower.includes('wa.me/') || lower.includes('api.whatsapp.com/')) {
+      if (nativeBridge && typeof nativeBridge.openExternal === 'function') {
+        nativeBridge.openExternal(url);
+        return true;
+      }
+      return false;
+    }
+
+    if (isDownloadUrl(url) && nativeBridge && typeof nativeBridge.downloadUrl === 'function') {
+      nativeBridge.downloadUrl(url, null, null);
+      return true;
+    }
+
+    return false;
+  }
+
+  var origOpen = window.open;
+  window.open = function(url, target, features) {
+    if (!url) return null;
+    var strUrl = String(url);
+    if (handleExternalOrDownload(strUrl)) {
+      return null;
+    }
+    window.location.href = strUrl;
+    return null;
+  };
+
+  document.addEventListener('click', function(e) {
+    var a = e.target && e.target.closest ? e.target.closest('a') : null;
+    if (!a || !a.href) return;
+    var href = a.href;
+    if (href.startsWith('javascript:') || href.startsWith('#')) return;
+
+    if (handleExternalOrDownload(href)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    if (a.target === '_blank') {
+      a.removeAttribute('target');
+    }
+  }, true);
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', applySafeViewport);
@@ -918,9 +997,6 @@ pub fn run() {
 
     let mut scripts: Vec<String> = Vec::new();
 
-    // Note: Splash screen is natively rendered by the local bundled index.html (0ms cold start).
-    // It is intentionally omitted from `scripts` to prevent it from re-injecting when remote pages load.
-
     let css_script = css_injection_script(INJECTION_CSS);
     if !css_script.is_empty() {
         scripts.push(css_script);
@@ -1057,28 +1133,11 @@ pub fn run() {
                         return false;
                     }
 
-                    let path = url.path().to_lowercase();
-                    let is_download_asset = path.ends_with(".pdf")
-                        || path.ends_with(".docx")
-                        || path.ends_with(".doc")
-                        || path.ends_with(".xlsx")
-                        || path.ends_with(".xls")
-                        || path.ends_with(".zip")
-                        || path.ends_with(".rar")
-                        || path.ends_with(".apk")
-                        || path.ends_with(".csv")
-                        || url.as_str().contains("/storage/v1/object/")
-                        || url.query().map_or(false, |q| q.contains("download=true"));
-
-                    #[cfg(mobile)]
-                    if is_download_asset {
-                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
-                        return false;
-                    }
 
                     if !sandbox_links || is_domain_allowed(url, &main_host_clone, &allowed_domains_clone) {
                         return true;
                     }
+
                     let _ = handle.opener().open_url(url.as_str(), None::<&str>);
                     false
                 });

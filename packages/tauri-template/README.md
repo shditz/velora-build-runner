@@ -26,6 +26,7 @@ packages/tauri-template/
 ├── package.json
 ├── scripts/
 │   ├── generate-icons.js      # Multi-resolution icon converter (Sharp & ico-endec)
+│   ├── render-ci-config.js    # Injects velora-config.json and permissions into Tauri manifest
 │   └── validate-template.js   # CI template integrity and manifest validator
 ├── src/
 │   ├── index.html             # Shell wrapper loading remote origin or offline screen

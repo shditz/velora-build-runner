@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { PNG } from "pngjs";
+import {fileURLToPath} from "node:url";
+import {PNG} from "pngjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,13 +13,8 @@ function ensureRgbaPng(filePath) {
     if (!fs.existsSync(filePath)) return;
     const buf = fs.readFileSync(filePath);
     const isPng =
-      buf.length > 26 &&
-      buf[0] === 0x89 &&
-      buf[1] === 0x50 &&
-      buf[2] === 0x4e &&
-      buf[3] === 0x47;
+      buf.length > 26 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
     if (!isPng) return;
-    // Tauri's generate_context! proc macro panics if any icon is not 32-bit RGBA (bitDepth 8, colorType 6)
     if (buf[24] === 8 && buf[25] === 6) {
       return;
     }
@@ -27,15 +22,13 @@ function ensureRgbaPng(filePath) {
       `[RenderConfig] Icon ${path.basename(filePath)} is not 32-bit RGBA (bitDepth: ${buf[24]}, colorType: ${buf[25]}). Normalizing to RGBA...`,
     );
     const parsed = PNG.sync.read(buf);
-    const rgbaBuf = PNG.sync.write(parsed, { colorType: 6 });
+    const rgbaBuf = PNG.sync.write(parsed, {colorType: 6});
     fs.writeFileSync(filePath, rgbaBuf);
     console.log(
       `[RenderConfig] Successfully converted ${path.basename(filePath)} to 32-bit RGBA (colorType: 6).`,
     );
   } catch (err) {
-    console.warn(
-      `[RenderConfig] Warning: Failed to convert ${filePath} to RGBA: ${err.message}`,
-    );
+    console.warn(`[RenderConfig] Warning: Failed to convert ${filePath} to RGBA: ${err.message}`);
   }
 }
 
@@ -49,17 +42,12 @@ function renderIndexHtml(splash, websiteUrl, appName) {
     cosmic: "linear-gradient(135deg, #09090b 0%, #2e1065 50%, #030712 100%)",
     ocean: "linear-gradient(135deg, #0c4a6e 0%, #1e1b4b 100%)",
     dark: "linear-gradient(180deg, #18181b 0%, #09090b 100%)",
-    "obsidian-violet":
-      "linear-gradient(135deg, #0f0728 0%, #180b38 40%, #09090b 100%)",
-    "cyber-emerald":
-      "linear-gradient(135deg, #022c22 0%, #064e3b 50%, #021f18 100%)",
-    "midnight-blue":
-      "linear-gradient(135deg, #031525 0%, #0c2340 50%, #020b14 100%)",
+    "obsidian-violet": "linear-gradient(135deg, #0f0728 0%, #180b38 40%, #09090b 100%)",
+    "cyber-emerald": "linear-gradient(135deg, #022c22 0%, #064e3b 50%, #021f18 100%)",
+    "midnight-blue": "linear-gradient(135deg, #031525 0%, #0c2340 50%, #020b14 100%)",
   };
   const effectiveBg =
-    bgType === "gradient" && gradients[gradPreset]
-      ? gradients[gradPreset]
-      : solidBg;
+    bgType === "gradient" && gradients[gradPreset] ? gradients[gradPreset] : solidBg;
   const splashMode = splash.mode || "visual";
   const customHtml = splash.customHtml || "";
   const customCss = splash.customCss || "";
@@ -71,8 +59,7 @@ function renderIndexHtml(splash, websiteUrl, appName) {
       : splash.loadingText !== undefined
         ? splash.loadingText
         : "Loading application...";
-  const subtextBadge =
-    splash.subtextBadge !== undefined ? splash.subtextBadge : "";
+  const subtextBadge = splash.subtextBadge !== undefined ? splash.subtextBadge : "";
   const spinnerStyle = splash.spinnerStyle || "orbit";
   const imageMode = splash.image || "";
   const iconDataUrl = splash.iconDataUrl || "";
@@ -96,10 +83,7 @@ function renderIndexHtml(splash, websiteUrl, appName) {
       iconHtml = `<div style="position:relative;margin-bottom:1.25rem"><div style="${boxStyle}"><svg style="width:${Math.round(logoSize * 0.45)}px;height:${Math.round(logoSize * 0.45)}px;color:#e4e4e7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/></svg></div></div>`;
     } else if (imageMode === "none") {
       iconHtml = "";
-    } else if (
-      imageMode &&
-      (imageMode.startsWith("data:image") || imageMode.startsWith("http"))
-    ) {
+    } else if (imageMode && (imageMode.startsWith("data:image") || imageMode.startsWith("http"))) {
       iconHtml = `<div style="position:relative;margin-bottom:1.25rem"><div style="${boxStyle}"><img src="${imageMode}" alt="Splash Graphic" style="width:100%;height:100%;object-fit:${showContainer ? "cover" : "contain"};border-radius:${showContainer ? "18px" : "0"};" /></div></div>`;
     } else if (iconDataUrl && iconDataUrl.length > 50) {
       iconHtml = `<div style="position:relative;margin-bottom:1.25rem"><div style="${boxStyle}"><img src="${iconDataUrl}" alt="App Icon" style="width:${showContainer ? "70%" : "100%"};height:${showContainer ? "70%" : "100%"};object-fit:contain;border-radius:${showContainer ? "10px" : "0"};" /></div></div>`;
@@ -141,11 +125,9 @@ function renderIndexHtml(splash, websiteUrl, appName) {
 
     let entranceStyle = "animation: velora-splash-fade 0.4s ease forwards;";
     if (entrance === "zoom")
-      entranceStyle =
-        "animation: velora-splash-zoom 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;";
+      entranceStyle = "animation: velora-splash-zoom 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;";
     else if (entrance === "shimmer")
-      entranceStyle =
-        "animation: velora-splash-breathe 2.5s ease-in-out infinite alternate;";
+      entranceStyle = "animation: velora-splash-breathe 2.5s ease-in-out infinite alternate;";
     else if (entrance === "none") entranceStyle = "";
 
     bodyContent = `
@@ -237,8 +219,7 @@ function renderIndexHtml(splash, websiteUrl, appName) {
 
 function renderOfflineHtml(offline, websiteUrl, appName) {
   const title = offline.title || "No Internet Connection";
-  const msg =
-    offline.message || "Please check your internet connection and try again.";
+  const msg = offline.message || "Please check your internet connection and try again.";
   const retry = offline.retryText || "Try Again";
   const bg = offline.themeBg || "#090a0c";
   const accent = offline.accentColor || "amber";
@@ -465,28 +446,14 @@ async function main() {
   }
 
   const appName =
-    (
-      payload.appName ||
-      payload.appConfig?.appName ||
-      payload.name ||
-      "Velora App"
-    )
+    (payload.appName || payload.appConfig?.appName || payload.name || "Velora App")
       .replace(/["\\]/g, "")
       .trim() || "Velora App";
-  const version = (
-    payload.version ||
-    payload.appConfig?.version ||
-    "1.0.0"
-  ).trim();
-  const rawBundleId = (
-    payload.bundleId ||
-    payload.appConfig?.bundleId ||
-    ""
-  ).trim();
+  const version = (payload.version || payload.appConfig?.version || "1.0.0").trim();
+  const rawBundleId = (payload.bundleId || payload.appConfig?.bundleId || "").trim();
   const safeSlug =
-    (payload.slug || payload.appConfig?.slug || appName)
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, "") || "app";
+    (payload.slug || payload.appConfig?.slug || appName).toLowerCase().replace(/[^a-z0-9]/g, "") ||
+    "app";
   const bundleId =
     rawBundleId && rawBundleId !== "com.velora.application"
       ? rawBundleId
@@ -503,10 +470,7 @@ async function main() {
   }
   if (websiteUrl) {
     websiteUrl = websiteUrl.trim();
-    if (
-      !websiteUrl.startsWith("http://") &&
-      !websiteUrl.startsWith("https://")
-    ) {
+    if (!websiteUrl.startsWith("http://") && !websiteUrl.startsWith("https://")) {
       websiteUrl = `https://${websiteUrl}`;
     }
   } else {
@@ -517,10 +481,7 @@ async function main() {
   }
 
   const projectId =
-    payload.projectId ||
-    payload.project_id ||
-    payload.appConfig?.projectId ||
-    projectIdArg;
+    payload.projectId || payload.project_id || payload.appConfig?.projectId || projectIdArg;
 
   let serverUrl = payload.serverUrl || payload.appConfig?.serverUrl || "";
   if (!serverUrl && callbackUrl) {
@@ -552,7 +513,15 @@ async function main() {
         .filter(Boolean);
     }
   }
-  const allowedDomains = Array.isArray(rawAllowed) ? [...rawAllowed] : [];
+  const allowedDomains = (Array.isArray(rawAllowed) ? rawAllowed : [])
+    .map((d) => {
+      if (typeof d !== "string") return "";
+      return d
+        .trim()
+        .replace(/^https?:\/\//i, "")
+        .replace(/\/.*$/, "");
+    })
+    .filter(Boolean);
   try {
     const targetHost = new URL(websiteUrl).hostname;
     if (targetHost && !allowedDomains.includes(targetHost)) {
@@ -569,42 +538,27 @@ async function main() {
       payload.userAgent ||
       payload.appConfig?.navigation?.userAgent ||
       null,
-    enableTray: Boolean(
-      payload.features?.enableTray ?? payload.enableTray ?? false,
-    ),
+    enableTray: Boolean(payload.features?.enableTray ?? payload.enableTray ?? false),
     enableOfflineFallback: Boolean(
-      payload.features?.enableOfflineFallback ??
-      payload.enableOfflineFallback ??
-      true,
+      payload.features?.enableOfflineFallback ?? payload.enableOfflineFallback ?? true,
     ),
     enableSingleInstance: Boolean(
-      payload.features?.enableSingleInstance ??
-      payload.enableSingleInstance ??
-      false,
+      payload.features?.enableSingleInstance ?? payload.enableSingleInstance ?? false,
     ),
-    enableDevtools: Boolean(
-      payload.features?.enableDevtools ?? payload.enableDevtools ?? false,
-    ),
-    deepLinkScheme:
-      payload.features?.deepLinkScheme || payload.deepLinkScheme || "",
+    enableDevtools: Boolean(payload.features?.enableDevtools ?? payload.enableDevtools ?? false),
+    deepLinkScheme: payload.features?.deepLinkScheme || payload.deepLinkScheme || "",
     enableUnreadBadge: Boolean(
       payload.features?.enableUnreadBadge ?? payload.enableUnreadBadge ?? false,
     ),
     sandboxExternalLinks: Boolean(
-      payload.features?.sandboxExternalLinks ??
-      payload.sandboxExternalLinks ??
-      true,
+      payload.features?.sandboxExternalLinks ?? payload.sandboxExternalLinks ?? true,
     ),
     injectionTiming:
-      payload.injection?.injectionTiming ||
-      payload.injectionTiming ||
-      "document_start",
-    trayMenuConfig:
-      payload.features?.trayMenuConfig || payload.trayMenuConfig || null,
+      payload.injection?.injectionTiming || payload.injectionTiming || "document_start",
+    trayMenuConfig: payload.features?.trayMenuConfig || payload.trayMenuConfig || null,
     customFont: {
       url: payload.injection?.customFontUrl || payload.customFontUrl || "",
-      family:
-        payload.injection?.customFontFamily || payload.customFontFamily || "",
+      family: payload.injection?.customFontFamily || payload.customFontFamily || "",
     },
     version,
     splashScreen: {
@@ -615,14 +569,9 @@ async function main() {
         false,
       ),
       durationMs: Number(
-        payload.splashScreen?.durationMs ??
-          payload.splashScreenDurationMs ??
-          2000,
+        payload.splashScreen?.durationMs ?? payload.splashScreenDurationMs ?? 2000,
       ),
-      bgColor:
-        payload.splashScreen?.bgColor ||
-        payload.splashScreenBgColor ||
-        "#0d0e12",
+      bgColor: payload.splashScreen?.bgColor || payload.splashScreenBgColor || "#0d0e12",
       bgType:
         payload.splashScreen?.bgType ||
         payload.splashBgType ||
@@ -647,8 +596,7 @@ async function main() {
         "fade",
       title: payload.splashScreen?.title || payload.appName || appName,
       subtext:
-        payload.splashScreen?.subtext !== undefined &&
-        payload.splashScreen?.subtext !== null
+        payload.splashScreen?.subtext !== undefined && payload.splashScreen?.subtext !== null
           ? payload.splashScreen.subtext
           : payload.splashScreen?.loadingText !== undefined &&
               payload.splashScreen?.loadingText !== null
@@ -660,14 +608,10 @@ async function main() {
         payload.splashScreen?.subtextBadge !== undefined &&
         payload.splashScreen?.subtextBadge !== null
           ? payload.splashScreen.subtextBadge
-          : payload.splashSubtext !== undefined &&
-              payload.splashSubtext !== null
+          : payload.splashSubtext !== undefined && payload.splashSubtext !== null
             ? payload.splashSubtext
             : "",
-      spinnerStyle:
-        payload.splashScreen?.spinnerStyle ||
-        payload.splashSpinnerStyle ||
-        "orbit",
+      spinnerStyle: payload.splashScreen?.spinnerStyle || payload.splashSpinnerStyle || "orbit",
       mode:
         payload.splashScreen?.mode ||
         payload.splashMode ||
@@ -704,8 +648,7 @@ async function main() {
     offlineConfig: {
       title: payload.offlineConfig?.title || "No Internet Connection",
       message:
-        payload.offlineConfig?.message ||
-        "Please check your internet connection and try again.",
+        payload.offlineConfig?.message || "Please check your internet connection and try again.",
       retryText: payload.offlineConfig?.retryText || "Try Again",
       themeBg: payload.offlineConfig?.themeBg || "#090a0c",
       accentColor: payload.offlineConfig?.accentColor || "amber",
@@ -722,17 +665,12 @@ async function main() {
       helpUrl: payload.offlineConfig?.helpUrl || "",
       showDiagnostics: Boolean(payload.offlineConfig?.showDiagnostics ?? false),
       showNetworkStatusBanner: Boolean(
-        payload.offlineConfig?.showNetworkStatusBanner ??
-        payload.showNetworkStatusBanner ??
-        true,
+        payload.offlineConfig?.showNetworkStatusBanner ?? payload.showNetworkStatusBanner ?? true,
       ),
     },
-    precacheAssets:
-      payload.precacheAssets || payload.offlineConfig?.precacheAssets || [],
+    precacheAssets: payload.precacheAssets || payload.offlineConfig?.precacheAssets || [],
     showNetworkStatusBanner: Boolean(
-      payload.showNetworkStatusBanner ??
-      payload.offlineConfig?.showNetworkStatusBanner ??
-      true,
+      payload.showNetworkStatusBanner ?? payload.offlineConfig?.showNetworkStatusBanner ?? true,
     ),
     window: {
       width: payload.window?.width || 1280,
@@ -745,64 +683,46 @@ async function main() {
       alwaysOnTop: payload.window?.alwaysOnTop ?? false,
       titlebarStyle: payload.window?.titleBarStyle || "standard",
       rememberWindowState: Boolean(
-        payload.window?.rememberWindowState ??
-        payload.rememberWindowState ??
-        true,
+        payload.window?.rememberWindowState ?? payload.rememberWindowState ?? true,
       ),
       showMinimizeButton: Boolean(
-        payload.window?.showMinimizeButton ??
-        payload.showMinimizeButton ??
-        true,
+        payload.window?.showMinimizeButton ?? payload.showMinimizeButton ?? true,
       ),
       showMaximizeButton: Boolean(
-        payload.window?.showMaximizeButton ??
-        payload.showMaximizeButton ??
-        true,
+        payload.window?.showMaximizeButton ?? payload.showMaximizeButton ?? true,
       ),
-      showCloseButton: Boolean(
-        payload.window?.showCloseButton ?? payload.showCloseButton ?? true,
-      ),
+      showCloseButton: Boolean(payload.window?.showCloseButton ?? payload.showCloseButton ?? true),
     },
     metadata: {
       copyright: payload.copyright || payload.metadata?.copyright || "",
       companyName: payload.companyName || payload.metadata?.companyName || "",
     },
-    devicePermissions: payload.devicePermissions || payload.appConfig?.devicePermissions || {
-      storage: true,
-      camera: false,
-      microphone: false,
-      geolocation: false,
-      notifications: true,
-      externalAppSchemes: true,
-    },
+    devicePermissions: payload.devicePermissions ||
+      payload.appConfig?.devicePermissions || {
+        storage: true,
+        camera: false,
+        microphone: false,
+        geolocation: false,
+        notifications: true,
+        externalAppSchemes: true,
+      },
   };
 
   const veloraConfigPath = path.join(srcTauriDir, "velora-config.json");
-  fs.writeFileSync(
-    veloraConfigPath,
-    JSON.stringify(veloraConfig, null, 2),
-    "utf8",
-  );
+  fs.writeFileSync(veloraConfigPath, JSON.stringify(veloraConfig, null, 2), "utf8");
   console.log(`[RenderConfig] Wrote ${veloraConfigPath}`);
 
   const cssPath = path.join(srcTauriDir, "injection.css");
   const jsPath = path.join(srcTauriDir, "injection.js");
   let customCss =
-    payload.injection?.customCss ||
-    payload.customCss ||
-    "/* No custom CSS injected */";
-  const customFontUrl =
-    payload.injection?.customFontUrl || payload.customFontUrl;
-  const customFontFamily =
-    payload.injection?.customFontFamily || payload.customFontFamily;
+    payload.injection?.customCss || payload.customCss || "/* No custom CSS injected */";
+  const customFontUrl = payload.injection?.customFontUrl || payload.customFontUrl;
+  const customFontFamily = payload.injection?.customFontFamily || payload.customFontFamily;
   if (customFontUrl && customFontFamily) {
     const fontFace = `@font-face {\n  font-family: '${customFontFamily}';\n  src: url('${customFontUrl}');\n  font-display: swap;\n}\nbody, button, input, select, textarea {\n  font-family: '${customFontFamily}', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;\n}\n`;
     customCss = fontFace + "\n" + customCss;
   }
-  const customJs =
-    payload.injection?.customJs ||
-    payload.customJs ||
-    "// No custom JS injected";
+  const customJs = payload.injection?.customJs || payload.customJs || "// No custom JS injected";
   fs.writeFileSync(cssPath, customCss, "utf8");
   fs.writeFileSync(jsPath, customJs, "utf8");
   console.log(
@@ -825,15 +745,11 @@ async function main() {
 
       if (!conf.bundle) conf.bundle = {};
       if (payload.copyright || payload.metadata?.copyright) {
-        conf.bundle.copyright =
-          payload.copyright || payload.metadata?.copyright;
+        conf.bundle.copyright = payload.copyright || payload.metadata?.copyright;
       }
       if (payload.companyName || payload.metadata?.companyName) {
-        conf.bundle.publisher =
-          payload.companyName || payload.metadata?.companyName;
+        conf.bundle.publisher = payload.companyName || payload.metadata?.companyName;
       }
-      // Deep link scheme is stored in velora-config.json.
-      // In Tauri v2, bundle.deepLink is rejected by schema validation.
       if (!conf.bundle.windows) conf.bundle.windows = {};
       if (!conf.bundle.windows.nsis) conf.bundle.windows.nsis = {};
       conf.bundle.windows.nsis.installMode = "currentUser";
@@ -870,7 +786,7 @@ async function main() {
     );
     const iconsDir = path.join(srcTauriDir, "icons");
     if (!fs.existsSync(iconsDir)) {
-      fs.mkdirSync(iconsDir, { recursive: true });
+      fs.mkdirSync(iconsDir, {recursive: true});
     }
 
     const iconFiles = [
@@ -888,7 +804,7 @@ async function main() {
       const iconUrl = `${serverUrl}/api/projects/${projectId}/icon?file=${encodeURIComponent(queryFile)}`;
       try {
         const res = await fetch(iconUrl, {
-          headers: { "User-Agent": "Velora-Compiler/1.0" },
+          headers: {"User-Agent": "Velora-Compiler/1.0"},
         });
         if (res.ok) {
           const arrayBuffer = await res.arrayBuffer();
@@ -896,9 +812,7 @@ async function main() {
           if (buffer.length > 100) {
             fs.writeFileSync(path.join(iconsDir, file), buffer);
             downloadedCount++;
-            console.log(
-              `[RenderConfig] Downloaded icon ${file} (${buffer.length} bytes)`,
-            );
+            console.log(`[RenderConfig] Downloaded icon ${file} (${buffer.length} bytes)`);
           }
         } else {
           console.log(
@@ -906,9 +820,7 @@ async function main() {
           );
         }
       } catch (err) {
-        console.warn(
-          `[RenderConfig] Failed to fetch icon ${file}: ${err.message}`,
-        );
+        console.warn(`[RenderConfig] Failed to fetch icon ${file}: ${err.message}`);
       }
     }
 
@@ -923,7 +835,6 @@ async function main() {
     }
   }
 
-  // Guarantee every icon in src-tauri/icons/ is 32-bit RGBA for Tauri compile-time macros
   const iconsDir = path.join(srcTauriDir, "icons");
   if (fs.existsSync(iconsDir)) {
     try {
@@ -943,62 +854,37 @@ async function main() {
     }
   }
 
-  for (const candidate of [
-    "128x128.png",
-    "32x32.png",
-    "icon-512.png",
-    "master.png",
-  ]) {
+  for (const candidate of ["128x128.png", "32x32.png", "icon-512.png", "master.png"]) {
     const p = path.join(iconsDir, candidate);
     if (fs.existsSync(p)) {
       try {
         const buf = fs.readFileSync(p);
         if (buf.length > 50) {
           veloraConfig.splashScreen.iconDataUrl = `data:image/png;base64,${buf.toString("base64")}`;
-          fs.writeFileSync(
-            veloraConfigPath,
-            JSON.stringify(veloraConfig, null, 2),
-            "utf8",
-          );
+          fs.writeFileSync(veloraConfigPath, JSON.stringify(veloraConfig, null, 2), "utf8");
           console.log(
             `[RenderConfig] Embedded icon (${candidate}, ${buf.length} bytes) as base64 into splashScreen.iconDataUrl`,
           );
           break;
         }
       } catch (err) {
-        console.warn(
-          "[RenderConfig] Failed to read icon for base64 splash:",
-          err,
-        );
+        console.warn("[RenderConfig] Failed to read icon for base64 splash:", err);
       }
     }
   }
 
   try {
     const indexHtmlPath = path.join(templateRoot, "src", "index.html");
-    const indexHtmlContent = renderIndexHtml(
-      veloraConfig.splashScreen,
-      websiteUrl,
-      appName,
-    );
+    const indexHtmlContent = renderIndexHtml(veloraConfig.splashScreen, websiteUrl, appName);
     fs.writeFileSync(indexHtmlPath, indexHtmlContent, "utf8");
-    console.log(
-      `[RenderConfig] Successfully rendered native splash screen into ${indexHtmlPath}`,
-    );
+    console.log(`[RenderConfig] Successfully rendered native splash screen into ${indexHtmlPath}`);
   } catch (err) {
-    console.warn(
-      "[RenderConfig] Failed to render index.html splash screen:",
-      err,
-    );
+    console.warn("[RenderConfig] Failed to render index.html splash screen:", err);
   }
 
   try {
     const offlineHtmlPath = path.join(templateRoot, "src", "offline.html");
-    const offlineHtmlContent = renderOfflineHtml(
-      veloraConfig.offlineConfig,
-      websiteUrl,
-      appName,
-    );
+    const offlineHtmlContent = renderOfflineHtml(veloraConfig.offlineConfig, websiteUrl, appName);
     fs.writeFileSync(offlineHtmlPath, offlineHtmlContent, "utf8");
     console.log(
       `[RenderConfig] Successfully rendered custom offline fallback into ${offlineHtmlPath}`,
@@ -1016,14 +902,11 @@ async function main() {
       function scan(currentDir, depth = 0) {
         if (depth > 6) return;
         try {
-          const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+          const entries = fs.readdirSync(currentDir, {withFileTypes: true});
           for (const entry of entries) {
             if (!entry.isDirectory()) continue;
             const fullPath = path.join(currentDir, entry.name);
-            if (
-              entry.name === "main" &&
-              path.basename(path.dirname(fullPath)) === "src"
-            ) {
+            if (entry.name === "main" && path.basename(path.dirname(fullPath)) === "src") {
               results.push(fullPath);
             } else if (entry.name !== "build" && entry.name !== ".gradle") {
               scan(fullPath, depth + 1);
@@ -1039,15 +922,14 @@ async function main() {
       let results = [];
       if (!fs.existsSync(dir)) return results;
       try {
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        const entries = fs.readdirSync(dir, {withFileTypes: true});
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
           if (entry.isDirectory()) {
             results = results.concat(findFilesRecursive(fullPath, filename));
           } else if (
             entry.isFile() &&
-            (entry.name === filename ||
-              (filename instanceof RegExp && filename.test(entry.name)))
+            (entry.name === filename || (filename instanceof RegExp && filename.test(entry.name)))
           ) {
             results.push(fullPath);
           }
@@ -1064,12 +946,7 @@ async function main() {
         const androidJavaDir = path.join(mainDir, "java");
         const manifestPath = path.join(mainDir, "AndroidManifest.xml");
 
-        // 1. Update App Name in strings.xml
-        const stringsXmlPath = path.join(
-          androidResDir,
-          "values",
-          "strings.xml",
-        );
+        const stringsXmlPath = path.join(androidResDir, "values", "strings.xml");
         if (fs.existsSync(stringsXmlPath)) {
           try {
             let stringsContent = fs.readFileSync(stringsXmlPath, "utf8");
@@ -1082,23 +959,15 @@ async function main() {
               `<string name="app_name">${cleanAppName}</string>`,
             );
             fs.writeFileSync(stringsXmlPath, stringsContent, "utf8");
-            console.log(
-              `[RenderConfig] Updated Android strings.xml with app_name: "${appName}"`,
-            );
+            console.log(`[RenderConfig] Updated Android strings.xml with app_name: "${appName}"`);
           } catch (err) {
             console.warn("[RenderConfig] Failed to update strings.xml:", err);
           }
         }
 
-        // 2. Inject Android Mipmap Icons
         const iconsDir = path.join(srcTauriDir, "icons");
         let fallbackIconBuf = null;
-        for (const candidate of [
-          "master.png",
-          "icon-512.png",
-          "128x128.png",
-          "32x32.png",
-        ]) {
+        for (const candidate of ["master.png", "icon-512.png", "128x128.png", "32x32.png"]) {
           const p = path.join(iconsDir, candidate);
           if (fs.existsSync(p)) {
             fallbackIconBuf = fs.readFileSync(p);
@@ -1109,14 +978,14 @@ async function main() {
         const mipmaps = ["mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"];
         for (const m of mipmaps) {
           const dir = path.join(androidResDir, `mipmap-${m}`);
-          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, {recursive: true});
 
           let iconBuf = null;
           if (projectId && serverUrl) {
             const iconUrl = `${serverUrl}/api/projects/${projectId}/icon?file=mipmap-${m}/ic_launcher.png`;
             try {
               const res = await fetch(iconUrl, {
-                headers: { "User-Agent": "Velora-Compiler/1.0" },
+                headers: {"User-Agent": "Velora-Compiler/1.0"},
               });
               if (res.ok) {
                 const b = Buffer.from(await res.arrayBuffer());
@@ -1145,7 +1014,6 @@ async function main() {
           }
         }
 
-        // 3. Harden AndroidManifest.xml
         if (fs.existsSync(manifestPath)) {
           try {
             let manifest = fs.readFileSync(manifestPath, "utf8");
@@ -1163,9 +1031,7 @@ async function main() {
             }
 
             const devPerms =
-              payload.devicePermissions ||
-              payload.appConfig?.devicePermissions ||
-              {};
+              payload.devicePermissions || payload.appConfig?.devicePermissions || {};
             const permissions = [
               "android.permission.INTERNET",
               "android.permission.ACCESS_NETWORK_STATE",
@@ -1193,7 +1059,6 @@ async function main() {
               );
             }
 
-            // Universal Bluetooth permissions for Web Bluetooth & direct thermal POS printers
             permissions.push(
               "android.permission.BLUETOOTH",
               "android.permission.BLUETOOTH_ADMIN",
@@ -1212,6 +1077,32 @@ async function main() {
 
             if (!manifest.includes("<queries>")) {
               const queriesBlock = `    <queries>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="whatsapp" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="sms" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="application/pdf" />
@@ -1236,19 +1127,19 @@ async function main() {
               manifest = manifest.replace("</manifest>", queriesBlock);
             }
 
-            if (devPerms.camera && !manifest.includes('android.hardware.camera')) {
+            if (devPerms.camera && !manifest.includes("android.hardware.camera")) {
               manifest = manifest.replace(
                 "</manifest>",
                 `    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>`,
               );
             }
-            if (devPerms.microphone && !manifest.includes('android.hardware.microphone')) {
+            if (devPerms.microphone && !manifest.includes("android.hardware.microphone")) {
               manifest = manifest.replace(
                 "</manifest>",
                 `    <uses-feature android:name="android.hardware.microphone" android:required="false" />\n</manifest>`,
               );
             }
-            if (devPerms.geolocation && !manifest.includes('android.hardware.location.gps')) {
+            if (devPerms.geolocation && !manifest.includes("android.hardware.location.gps")) {
               manifest = manifest.replace(
                 "</manifest>",
                 `    <uses-feature android:name="android.hardware.location.gps" android:required="false" />\n</manifest>`,
@@ -1267,22 +1158,16 @@ async function main() {
               "[RenderConfig] Hardened AndroidManifest.xml (cleartextTraffic, hardwareAccelerated, network/bluetooth/notification permissions, queries, adjustResize)",
             );
           } catch (err) {
-            console.warn(
-              "[RenderConfig] Failed to patch AndroidManifest.xml:",
-              err,
-            );
+            console.warn("[RenderConfig] Failed to patch AndroidManifest.xml:", err);
           }
         }
 
-        // 4. Configure themes.xml and styles.xml with fitsSystemWindows & edge-to-edge opt-out
         const xmlStyleFiles = [
           ...findFilesRecursive(androidResDir, "styles.xml"),
           ...findFilesRecursive(androidResDir, "themes.xml"),
         ];
         const barColor =
-          veloraConfig.splashScreen?.bgColor ||
-          veloraConfig.offlineConfig?.themeBg ||
-          "#090a0c";
+          veloraConfig.splashScreen?.bgColor || veloraConfig.offlineConfig?.themeBg || "#090a0c";
 
         function isColorLight(hexColor) {
           try {
@@ -1355,23 +1240,18 @@ async function main() {
               );
             }
           } catch (err) {
-            console.warn(
-              `[RenderConfig] Failed to patch style file ${styleFile}:`,
-              err,
-            );
+            console.warn(`[RenderConfig] Failed to patch style file ${styleFile}:`, err);
           }
         }
 
-        // 5. Patch MainActivity.kt to apply WindowInsets padding to root content view
-        const mainActivityFiles = findFilesRecursive(
-          androidJavaDir,
-          "MainActivity.kt",
-        );
+        const mainActivityFiles = [
+          ...findFilesRecursive(androidJavaDir, "MainActivity.kt"),
+          ...findFilesRecursive(mainDir, "MainActivity.kt"),
+        ].filter((v, i, a) => a.indexOf(v) === i);
         for (const mainActivityPath of mainActivityFiles) {
           try {
             let mainActivityContent = fs.readFileSync(mainActivityPath, "utf8");
 
-            // Normalize classes defined without body braces: class MainActivity : TauriActivity()
             if (!mainActivityContent.includes("{")) {
               mainActivityContent = mainActivityContent.replace(
                 /class\s+MainActivity[^\n\r{]*/,
@@ -1379,9 +1259,7 @@ async function main() {
               );
             }
 
-            if (
-              !mainActivityContent.includes("setOnApplyWindowInsetsListener")
-            ) {
+            if (!mainActivityContent.includes("setOnApplyWindowInsetsListener")) {
               const insetsSnippet = `
     try {
       androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, true)
@@ -1406,11 +1284,7 @@ async function main() {
       android.util.Log.w("Velora", "Failed to apply system insets: " + e.message)
     }
 `;
-              if (
-                mainActivityContent.includes(
-                  "super.onCreate(savedInstanceState)",
-                )
-              ) {
+              if (mainActivityContent.includes("super.onCreate(savedInstanceState)")) {
                 mainActivityContent = mainActivityContent.replace(
                   "super.onCreate(savedInstanceState)",
                   `super.onCreate(savedInstanceState)\n${insetsSnippet}`,
@@ -1522,11 +1396,88 @@ async function main() {
         }
       }
     }
+
+    @android.webkit.JavascriptInterface
+    fun openExternal(targetUrl: String?): Boolean {
+      if (targetUrl.isNullOrBlank()) return false
+      this@MainActivity.runOnUiThread {
+        try {
+          val uri = android.net.Uri.parse(targetUrl)
+          val scheme = uri.scheme?.lowercase() ?: ""
+          val intent = if (scheme == "intent") {
+            android.content.Intent.parseUri(targetUrl, android.content.Intent.URI_INTENT_SCHEME)
+          } else {
+            android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+          }
+          intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          this@MainActivity.startActivity(intent)
+        } catch (e: Exception) {
+          android.util.Log.w("VeloraIntent", "Direct intent failed: " + e.message)
+          if (targetUrl.startsWith("whatsapp://") || targetUrl.contains("wa.me") || targetUrl.contains("api.whatsapp.com")) {
+            try {
+              val query = if (targetUrl.contains("?")) targetUrl.substring(targetUrl.indexOf("?") + 1) else ""
+              val fallbackUri = android.net.Uri.parse("https://api.whatsapp.com/send?" + query)
+              val fallbackIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, fallbackUri).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              this@MainActivity.startActivity(fallbackIntent)
+            } catch (e2: Exception) {
+              android.util.Log.e("VeloraIntent", "WhatsApp fallback failed: " + e2.message)
+            }
+          } else if (targetUrl.startsWith("intent:")) {
+            try {
+              val parsed = android.content.Intent.parseUri(targetUrl, android.content.Intent.URI_INTENT_SCHEME)
+              val fallback = parsed.getStringExtra("browser_fallback_url")
+              if (!fallback.isNullOrBlank()) {
+                val fbIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(fallback)).apply {
+                  addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                this@MainActivity.startActivity(fbIntent)
+              }
+            } catch (e3: Exception) {}
+          }
+        }
+      }
+      return true
+    }
+
+    @android.webkit.JavascriptInterface
+    fun downloadUrl(fileUrl: String?, contentDisposition: String?, mimeType: String?) {
+      if (fileUrl.isNullOrBlank()) return
+      this@MainActivity.runOnUiThread {
+        try {
+          val uri = android.net.Uri.parse(fileUrl)
+          val dmRequest = android.app.DownloadManager.Request(uri).apply {
+            val cookie = android.webkit.CookieManager.getInstance().getCookie(fileUrl)
+            if (!cookie.isNullOrBlank()) addRequestHeader("Cookie", cookie)
+            val ua = mainWv.settings.userAgentString
+            if (!ua.isNullOrBlank()) addRequestHeader("User-Agent", ua)
+            setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            val fname = android.webkit.URLUtil.guessFileName(fileUrl, contentDisposition, mimeType)
+            setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fname)
+          }
+          val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
+          dm?.enqueue(dmRequest)
+          android.widget.Toast.makeText(this@MainActivity, "Downloading...", android.widget.Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+          try {
+            val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(fileUrl)).apply {
+              addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(viewIntent)
+          } catch (e2: Exception) {
+            android.util.Log.e("VeloraDownload", "Download error: " + e2.message)
+          }
+        }
+      }
+    }
   }
 
   override fun onWebViewCreate(webView: android.webkit.WebView) {
     super.onWebViewCreate(webView)
     try {
+      webView.settings.setSupportMultipleWindows(false)
+      webView.settings.javaScriptCanOpenWindowsAutomatically = true
       webView.addJavascriptInterface(VeloraPrintInterface(webView), "__VELORA_NATIVE_PRINT__")
 
       webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
@@ -1590,9 +1541,7 @@ async function main() {
               const lastBraceIndex = mainActivityContent.lastIndexOf("}");
               if (lastBraceIndex !== -1) {
                 mainActivityContent =
-                  mainActivityContent.slice(0, lastBraceIndex) +
-                  printHookSnippet +
-                  "\n}\n";
+                  mainActivityContent.slice(0, lastBraceIndex) + printHookSnippet + "\n}\n";
                 fs.writeFileSync(mainActivityPath, mainActivityContent, "utf8");
                 console.log(
                   `[RenderConfig] Patched MainActivity.kt with onWebViewCreate native print & download bridge at ${path.relative(templateRoot, mainActivityPath)}`,
@@ -1600,10 +1549,7 @@ async function main() {
               }
             }
           } catch (err) {
-            console.warn(
-              "[RenderConfig] Failed to patch MainActivity.kt:",
-              err,
-            );
+            console.warn("[RenderConfig] Failed to patch MainActivity.kt:", err);
           }
         }
       }
