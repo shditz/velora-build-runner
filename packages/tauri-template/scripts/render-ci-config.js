@@ -1333,7 +1333,9 @@ async function main() {
         java.io.FileOutputStream(dest).use { it.write(bytes) }
         fileUri = android.net.Uri.fromFile(dest)
       }
-      android.widget.Toast.makeText(this, "Saved: " + fileName, android.widget.Toast.LENGTH_SHORT).show()
+      this@MainActivity.runOnUiThread {
+        android.widget.Toast.makeText(this@MainActivity, "Saved: " + fileName, android.widget.Toast.LENGTH_SHORT).show()
+      }
       if (fileUri != null) {
         try {
           val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
@@ -1382,11 +1384,11 @@ async function main() {
 
     @android.webkit.JavascriptInterface
     fun saveBlob(dataUrl: String?, contentDisposition: String?, mimeType: String?) {
-      this@MainActivity.runOnUiThread {
+      if (dataUrl.isNullOrBlank()) return
+      java.util.concurrent.Executors.newSingleThreadExecutor().execute {
         try {
-          if (dataUrl.isNullOrBlank()) return@runOnUiThread
           val commaIndex = dataUrl.indexOf(",")
-          if (commaIndex == -1) return@runOnUiThread
+          if (commaIndex == -1) return@execute
           val base64Str = dataUrl.substring(commaIndex + 1)
           val bytes = android.util.Base64.decode(base64Str, android.util.Base64.DEFAULT)
           val fname = android.webkit.URLUtil.guessFileName("file://blob", contentDisposition, mimeType)
@@ -1400,7 +1402,7 @@ async function main() {
     @android.webkit.JavascriptInterface
     fun openExternal(targetUrl: String?): Boolean {
       if (targetUrl.isNullOrBlank()) return false
-      this@MainActivity.runOnUiThread {
+      java.util.concurrent.Executors.newSingleThreadExecutor().execute {
         try {
           val uri = android.net.Uri.parse(targetUrl)
           val scheme = uri.scheme?.lowercase() ?: ""
@@ -1444,30 +1446,45 @@ async function main() {
     @android.webkit.JavascriptInterface
     fun downloadUrl(fileUrl: String?, contentDisposition: String?, mimeType: String?) {
       if (fileUrl.isNullOrBlank()) return
-      this@MainActivity.runOnUiThread {
+      java.util.concurrent.Executors.newSingleThreadExecutor().execute {
         try {
           val uri = android.net.Uri.parse(fileUrl)
-          val dmRequest = android.app.DownloadManager.Request(uri).apply {
-            val cookie = android.webkit.CookieManager.getInstance().getCookie(fileUrl)
-            if (!cookie.isNullOrBlank()) addRequestHeader("Cookie", cookie)
-            val ua = mainWv.settings.userAgentString
-            if (!ua.isNullOrBlank()) addRequestHeader("User-Agent", ua)
-            setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            val fname = android.webkit.URLUtil.guessFileName(fileUrl, contentDisposition, mimeType)
-            setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fname)
-          }
-          val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
-          dm?.enqueue(dmRequest)
-          android.widget.Toast.makeText(this@MainActivity, "Downloading...", android.widget.Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-          try {
-            val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(fileUrl)).apply {
-              addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          val scheme = uri.scheme?.lowercase() ?: ""
+          if (scheme == "http" || scheme == "https") {
+            try {
+              val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (!mimeType.isNullOrBlank() && mimeType != "application/octet-stream") {
+                  setDataAndType(uri, mimeType)
+                }
+              }
+              this@MainActivity.startActivity(viewIntent)
+              return@execute
+            } catch (eView: Exception) {
+              android.util.Log.w("VeloraDownload", "Direct view intent failed: " + eView.message)
             }
-            startActivity(viewIntent)
-          } catch (e2: Exception) {
-            android.util.Log.e("VeloraDownload", "Download error: " + e2.message)
+
+            try {
+              val dmRequest = android.app.DownloadManager.Request(uri).apply {
+                setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                val fname = android.webkit.URLUtil.guessFileName(fileUrl, contentDisposition, mimeType)
+                setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fname)
+              }
+              val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
+              dm?.enqueue(dmRequest)
+              this@MainActivity.runOnUiThread {
+                android.widget.Toast.makeText(this@MainActivity, "Downloading...", android.widget.Toast.LENGTH_SHORT).show()
+              }
+            } catch (eDm: Exception) {
+              android.util.Log.e("VeloraDownload", "DownloadManager failed: " + eDm.message)
+              val fallbackIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              this@MainActivity.startActivity(fallbackIntent)
+            }
           }
+        } catch (e: Exception) {
+          android.util.Log.e("VeloraDownload", "Download error: " + e.message)
         }
       }
     }
@@ -1481,48 +1498,57 @@ async function main() {
       webView.addJavascriptInterface(VeloraPrintInterface(webView), "__VELORA_NATIVE_PRINT__")
 
       webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
-        try {
-          val uri = android.net.Uri.parse(url)
-          val scheme = uri.scheme?.lowercase() ?: ""
-          if (scheme == "http" || scheme == "https") {
-            try {
-              val dmRequest = android.app.DownloadManager.Request(uri).apply {
-                val cookie = android.webkit.CookieManager.getInstance().getCookie(url)
-                if (!cookie.isNullOrBlank()) {
-                  addRequestHeader("Cookie", cookie)
+        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
+          try {
+            val uri = android.net.Uri.parse(url)
+            val scheme = uri.scheme?.lowercase() ?: ""
+            if (scheme == "http" || scheme == "https") {
+              try {
+                val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                  addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                  if (!mimeType.isNullOrBlank() && mimeType != "application/octet-stream") {
+                    setDataAndType(uri, mimeType)
+                  }
                 }
-                if (!userAgent.isNullOrBlank()) {
-                  addRequestHeader("User-Agent", userAgent)
+                this@MainActivity.startActivity(viewIntent)
+              } catch (eView: Exception) {
+                try {
+                  val dmRequest = android.app.DownloadManager.Request(uri).apply {
+                    setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    val fname = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
+                    setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fname)
+                  }
+                  val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
+                  dm?.enqueue(dmRequest)
+                  this@MainActivity.runOnUiThread {
+                    android.widget.Toast.makeText(this@MainActivity, "Downloading...", android.widget.Toast.LENGTH_SHORT).show()
+                  }
+                } catch (eDm: Exception) {
+                  val fallbackIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                  }
+                  this@MainActivity.startActivity(fallbackIntent)
                 }
-                setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+              }
+            } else if (scheme == "data") {
+              val commaIndex = url.indexOf(",")
+              if (commaIndex != -1) {
+                val bytes = android.util.Base64.decode(url.substring(commaIndex + 1), android.util.Base64.DEFAULT)
                 val fname = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
-                setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fname)
+                saveBytesAndNotify(bytes, fname, mimeType ?: "application/octet-stream")
               }
-              val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
-              dm?.enqueue(dmRequest)
-              android.widget.Toast.makeText(this, "Downloading...", android.widget.Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-              val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            } else if (scheme == "blob") {
+              val escapedUrl = url.replace("'", "\\\\'")
+              val escapedCd = (contentDisposition ?: "").replace("'", "\\\\'")
+              val escapedMt = (mimeType ?: "").replace("'", "\\\\'")
+              val js = "(function(){try{function send(b){var r=new FileReader();r.onloadend=function(){if(window.__VELORA_NATIVE_PRINT__&&window.__VELORA_NATIVE_PRINT__.saveBlob){window.__VELORA_NATIVE_PRINT__.saveBlob(r.result,'" + escapedCd + "','" + escapedMt + "');}};r.readAsDataURL(b);}if(typeof fetch==='function'){fetch('" + escapedUrl + "').then(function(res){return res.blob();}).then(send).catch(function(){useXhr();});}else{useXhr();}function useXhr(){var x=new XMLHttpRequest();x.open('GET','" + escapedUrl + "',true);x.responseType='blob';x.onload=function(){if(this.status===200||this.status===0){send(this.response);}};x.send();}}catch(e){}})();"
+              this@MainActivity.runOnUiThread {
+                webView.evaluateJavascript(js, null)
               }
-              startActivity(viewIntent)
             }
-          } else if (scheme == "data") {
-            val commaIndex = url.indexOf(",")
-            if (commaIndex != -1) {
-              val bytes = android.util.Base64.decode(url.substring(commaIndex + 1), android.util.Base64.DEFAULT)
-              val fname = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
-              saveBytesAndNotify(bytes, fname, mimeType ?: "application/octet-stream")
-            }
-          } else if (scheme == "blob") {
-            val escapedUrl = url.replace("'", "\\\\'")
-            val escapedCd = (contentDisposition ?: "").replace("'", "\\\\'")
-            val escapedMt = (mimeType ?: "").replace("'", "\\\\'")
-            val js = "(function(){try{function send(b){var r=new FileReader();r.onloadend=function(){if(window.__VELORA_NATIVE_PRINT__&&window.__VELORA_NATIVE_PRINT__.saveBlob){window.__VELORA_NATIVE_PRINT__.saveBlob(r.result,'" + escapedCd + "','" + escapedMt + "');}};r.readAsDataURL(b);}if(typeof fetch==='function'){fetch('" + escapedUrl + "').then(function(res){return res.blob();}).then(send).catch(function(){useXhr();});}else{useXhr();}function useXhr(){var x=new XMLHttpRequest();x.open('GET','" + escapedUrl + "',true);x.responseType='blob';x.onload=function(){if(this.status===200||this.status===0){send(this.response);}};x.send();}}catch(e){}})();"
-            webView.evaluateJavascript(js, null)
+          } catch (e: Exception) {
+            android.util.Log.e("VeloraDownload", "Download error: " + e.message)
           }
-        } catch (e: Exception) {
-          android.util.Log.e("VeloraDownload", "Download error: " + e.message)
         }
       }
     } catch (e: Exception) {

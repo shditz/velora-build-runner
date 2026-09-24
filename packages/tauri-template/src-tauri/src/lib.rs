@@ -842,9 +842,14 @@ fn android_navigation_script() -> String {
       return false;
     }
 
-    if (isDownloadUrl(url) && nativeBridge && typeof nativeBridge.downloadUrl === 'function') {
-      nativeBridge.downloadUrl(url, null, null);
-      return true;
+    if (isDownloadUrl(url) && nativeBridge) {
+      if (typeof nativeBridge.downloadUrl === 'function') {
+        nativeBridge.downloadUrl(url, null, null);
+        return true;
+      } else if (typeof nativeBridge.openExternal === 'function') {
+        nativeBridge.openExternal(url);
+        return true;
+      }
     }
 
     return false;
@@ -856,6 +861,14 @@ fn android_navigation_script() -> String {
     var strUrl = String(url);
     if (handleExternalOrDownload(strUrl)) {
       return null;
+    }
+    var nativeBridge = window.__VELORA_NATIVE_PRINT__;
+    if (nativeBridge && typeof nativeBridge.openExternal === 'function') {
+      nativeBridge.openExternal(strUrl);
+      return null;
+    }
+    if (origOpen) {
+      try { return origOpen.call(window, url, target, features); } catch(e) {}
     }
     window.location.href = strUrl;
     return null;
@@ -1156,13 +1169,21 @@ pub fn run() {
                         || scheme == "quickprinter"
                     {
                         if allow_external_schemes {
-                            let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                            let u_str = url.as_str().to_string();
+                            let h = handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _ = h.opener().open_url(&u_str, None::<&str>);
+                            });
                         }
                         return false;
                     }
 
                     if (scheme == "http" || scheme == "https") && is_download_url(url) {
-                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                        let u_str = url.as_str().to_string();
+                        let h = handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = h.opener().open_url(&u_str, None::<&str>);
+                        });
                         return false;
                     }
 
@@ -1170,7 +1191,11 @@ pub fn run() {
                         return true;
                     }
 
-                    let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                    let u_str = url.as_str().to_string();
+                    let h = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = h.opener().open_url(&u_str, None::<&str>);
+                    });
                     false
                 });
 
