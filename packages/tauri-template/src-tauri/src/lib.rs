@@ -296,6 +296,34 @@ fn is_domain_allowed(nav_url: &Url, main_host: &str, allowed: &[String]) -> bool
     false
 }
 
+fn is_download_url(url: &Url) -> bool {
+    let path = url.path().to_lowercase();
+    let path_no_query = path.split('?').next().unwrap_or(&path);
+    let path_no_frag = path_no_query.split('#').next().unwrap_or(path_no_query);
+
+    let download_extensions = [
+        ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
+        ".zip", ".rar", ".7z", ".tar", ".gz",
+        ".apk", ".csv", ".mp3", ".mp4", ".avi", ".mkv",
+        ".epub", ".iso", ".dmg", ".exe", ".msi",
+    ];
+    for ext in &download_extensions {
+        if path_no_frag.ends_with(ext) {
+            return true;
+        }
+    }
+
+    let full = url.as_str().to_lowercase();
+    if full.contains("/storage/v1/object/") {
+        return true;
+    }
+    if full.contains("download=true") || full.contains("response-content-disposition=attachment") {
+        return true;
+    }
+
+    false
+}
+
 fn css_injection_script(css: &str) -> String {
     if css.trim().is_empty() {
         return String::new();
@@ -1133,6 +1161,10 @@ pub fn run() {
                         return false;
                     }
 
+                    if (scheme == "http" || scheme == "https") && is_download_url(url) {
+                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                        return false;
+                    }
 
                     if !sandbox_links || is_domain_allowed(url, &main_host_clone, &allowed_domains_clone) {
                         return true;
