@@ -5,7 +5,9 @@ import {PNG} from "pngjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const templateRoot = path.resolve(__dirname, "..");
+const templateRoot = process.env.VELORA_WORKSPACE_DIR
+  ? path.resolve(process.env.VELORA_WORKSPACE_DIR)
+  : path.resolve(__dirname, "..");
 const srcTauriDir = path.join(templateRoot, "src-tauri");
 
 function ensureRgbaPng(filePath) {
