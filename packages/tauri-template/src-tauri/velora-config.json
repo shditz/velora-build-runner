@@ -80,5 +80,13 @@
     "customCss": ""
   },
   "precacheAssets": [],
-  "showNetworkStatusBanner": true
+  "showNetworkStatusBanner": true,
+  "devicePermissions": {
+    "storage": true,
+    "camera": false,
+    "microphone": false,
+    "geolocation": false,
+    "notifications": true,
+    "externalAppSchemes": true
+  }
 }

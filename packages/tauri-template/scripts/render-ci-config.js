@@ -697,15 +697,34 @@ async function main() {
       copyright: payload.copyright || payload.metadata?.copyright || "",
       companyName: payload.companyName || payload.metadata?.companyName || "",
     },
-    devicePermissions: payload.devicePermissions ||
-      payload.appConfig?.devicePermissions || {
-        storage: true,
-        camera: false,
-        microphone: false,
-        geolocation: false,
-        notifications: true,
-        externalAppSchemes: true,
-      },
+    devicePermissions: {
+      storage: Boolean(
+        payload.devicePermissions?.storage ?? payload.appConfig?.devicePermissions?.storage ?? true,
+      ),
+      camera: Boolean(
+        payload.devicePermissions?.camera ?? payload.appConfig?.devicePermissions?.camera ?? false,
+      ),
+      microphone: Boolean(
+        payload.devicePermissions?.microphone ??
+          payload.appConfig?.devicePermissions?.microphone ??
+          false,
+      ),
+      geolocation: Boolean(
+        payload.devicePermissions?.geolocation ??
+          payload.appConfig?.devicePermissions?.geolocation ??
+          false,
+      ),
+      notifications: Boolean(
+        payload.devicePermissions?.notifications ??
+          payload.appConfig?.devicePermissions?.notifications ??
+          true,
+      ),
+      externalAppSchemes: Boolean(
+        payload.devicePermissions?.externalAppSchemes ??
+          payload.appConfig?.devicePermissions?.externalAppSchemes ??
+          true,
+      ),
+    },
   };
 
   const veloraConfigPath = path.join(srcTauriDir, "velora-config.json");
@@ -1085,6 +1104,18 @@ async function main() {
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:host="wa.me" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:host="api.whatsapp.com" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:host="chat.whatsapp.com" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
         <intent>
@@ -1399,35 +1430,173 @@ async function main() {
       }
     }
 
+    private fun handleWhatsAppIntent(targetUrl: String): Boolean {
+      try {
+        val uri = android.net.Uri.parse(targetUrl)
+        val scheme = uri.scheme?.lowercase() ?: ""
+        val host = uri.host?.lowercase() ?: ""
+
+        if (scheme == "intent") {
+          try {
+            val parsedIntent = android.content.Intent.parseUri(targetUrl, android.content.Intent.URI_INTENT_SCHEME).apply {
+              addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            this@MainActivity.startActivity(parsedIntent)
+            return true
+          } catch (eInt: Exception) {
+            android.util.Log.d("VeloraWA", "Parsed intent failed: " + eInt.message)
+          }
+        }
+
+        if (host == "chat.whatsapp.com" || (host.endsWith(".whatsapp.com") && uri.path?.startsWith("/invite") == true)) {
+          try {
+            val waIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+              setPackage("com.whatsapp")
+              addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            this@MainActivity.startActivity(waIntent)
+            return true
+          } catch (e: Exception) {
+            try {
+              val w4bIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                setPackage("com.whatsapp.w4b")
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              this@MainActivity.startActivity(w4bIntent)
+              return true
+            } catch (e2: Exception) {
+              val webIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              this@MainActivity.startActivity(webIntent)
+              return true
+            }
+          }
+        }
+
+        var phone = ""
+        var text = ""
+
+        if (scheme == "whatsapp") {
+          phone = uri.getQueryParameter("phone") ?: ""
+          text = uri.getQueryParameter("text") ?: ""
+        } else if (host == "wa.me" || host.endsWith(".wa.me")) {
+          val path = (uri.path ?: "").trimStart('/')
+          if (path.isNotEmpty() && !path.startsWith("send")) {
+            phone = path
+          } else {
+            phone = uri.getQueryParameter("phone") ?: ""
+          }
+          text = uri.getQueryParameter("text") ?: ""
+        } else if (host == "api.whatsapp.com" || host.endsWith(".whatsapp.com")) {
+          phone = uri.getQueryParameter("phone") ?: ""
+          text = uri.getQueryParameter("text") ?: ""
+        }
+
+        val cleanPhone = phone.replace(Regex("[^0-9]"), "")
+        val waUriBuilder = android.net.Uri.Builder()
+          .scheme("whatsapp")
+          .authority("send")
+        if (cleanPhone.isNotEmpty()) {
+          waUriBuilder.appendQueryParameter("phone", cleanPhone)
+        }
+        if (text.isNotEmpty()) {
+          waUriBuilder.appendQueryParameter("text", text)
+        }
+        val directWaUri = waUriBuilder.build()
+
+        try {
+          val directIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, directWaUri).apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          this@MainActivity.startActivity(directIntent)
+          return true
+        } catch (eDirect: Exception) {
+          android.util.Log.d("VeloraWA", "Direct WA intent failed: " + eDirect.message)
+        }
+
+        try {
+          val waPkgIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, directWaUri).apply {
+            setPackage("com.whatsapp")
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          this@MainActivity.startActivity(waPkgIntent)
+          return true
+        } catch (eWa: Exception) {
+          android.util.Log.d("VeloraWA", "WhatsApp package failed: " + eWa.message)
+        }
+
+        try {
+          val w4bPkgIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, directWaUri).apply {
+            setPackage("com.whatsapp.w4b")
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          this@MainActivity.startActivity(w4bPkgIntent)
+          return true
+        } catch (eW4b: Exception) {
+          android.util.Log.d("VeloraWA", "WhatsApp Business package failed: " + eW4b.message)
+        }
+
+        try {
+          val webFallback = if (cleanPhone.isNotEmpty() || text.isNotEmpty()) {
+            val b = android.net.Uri.parse("https://api.whatsapp.com/send").buildUpon()
+            if (cleanPhone.isNotEmpty()) b.appendQueryParameter("phone", cleanPhone)
+            if (text.isNotEmpty()) b.appendQueryParameter("text", text)
+            b.build()
+          } else {
+            uri
+          }
+          val webIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, webFallback).apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          this@MainActivity.startActivity(webIntent)
+          return true
+        } catch (eWeb: Exception) {
+          android.util.Log.w("VeloraWA", "Web fallback failed: " + eWeb.message)
+        }
+
+        try {
+          val marketIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=com.whatsapp")).apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          this@MainActivity.startActivity(marketIntent)
+          return true
+        } catch (eMarket: Exception) {
+          return false
+        }
+      } catch (err: Exception) {
+        android.util.Log.e("VeloraWA", "handleWhatsAppIntent error: " + err.message)
+        return false
+      }
+    }
+
     @android.webkit.JavascriptInterface
     fun openExternal(targetUrl: String?): Boolean {
       if (targetUrl.isNullOrBlank()) return false
       java.util.concurrent.Executors.newSingleThreadExecutor().execute {
         try {
+          val lowerUrl = targetUrl.lowercase()
+          val isWa = lowerUrl.startsWith("whatsapp:") ||
+                     lowerUrl.contains("wa.me/") ||
+                     lowerUrl.contains("api.whatsapp.com/") ||
+                     lowerUrl.contains("chat.whatsapp.com/") ||
+                     lowerUrl.contains("whatsapp.com/send") ||
+                     (lowerUrl.startsWith("intent:") && (lowerUrl.contains("whatsapp") || lowerUrl.contains("com.whatsapp")))
+
+          if (isWa && handleWhatsAppIntent(targetUrl)) {
+            return@execute
+          }
+
           val uri = android.net.Uri.parse(targetUrl)
           val scheme = uri.scheme?.lowercase() ?: ""
-          val intent = if (scheme == "intent") {
-            android.content.Intent.parseUri(targetUrl, android.content.Intent.URI_INTENT_SCHEME)
-          } else {
-            android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
-          }
-          intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-          this@MainActivity.startActivity(intent)
-        } catch (e: Exception) {
-          android.util.Log.w("VeloraIntent", "Direct intent failed: " + e.message)
-          if (targetUrl.startsWith("whatsapp://") || targetUrl.contains("wa.me") || targetUrl.contains("api.whatsapp.com")) {
+          if (scheme == "intent") {
             try {
-              val query = if (targetUrl.contains("?")) targetUrl.substring(targetUrl.indexOf("?") + 1) else ""
-              val fallbackUri = android.net.Uri.parse("https://api.whatsapp.com/send?" + query)
-              val fallbackIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, fallbackUri).apply {
+              val intent = android.content.Intent.parseUri(targetUrl, android.content.Intent.URI_INTENT_SCHEME).apply {
                 addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
               }
-              this@MainActivity.startActivity(fallbackIntent)
-            } catch (e2: Exception) {
-              android.util.Log.e("VeloraIntent", "WhatsApp fallback failed: " + e2.message)
-            }
-          } else if (targetUrl.startsWith("intent:")) {
-            try {
+              this@MainActivity.startActivity(intent)
+              return@execute
+            } catch (eIntent: Exception) {
               val parsed = android.content.Intent.parseUri(targetUrl, android.content.Intent.URI_INTENT_SCHEME)
               val fallback = parsed.getStringExtra("browser_fallback_url")
               if (!fallback.isNullOrBlank()) {
@@ -1435,9 +1604,22 @@ async function main() {
                   addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 this@MainActivity.startActivity(fbIntent)
+                return@execute
               }
-            } catch (e3: Exception) {}
+            }
           }
+
+          val intent = if (scheme == "tel") {
+            android.content.Intent(android.content.Intent.ACTION_DIAL, uri)
+          } else if (scheme == "mailto") {
+            android.content.Intent(android.content.Intent.ACTION_SENDTO, uri)
+          } else {
+            android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+          }
+          intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          this@MainActivity.startActivity(intent)
+        } catch (e: Exception) {
+          android.util.Log.w("VeloraIntent", "Open external failed: " + e.message)
         }
       }
       return true
@@ -1495,7 +1677,100 @@ async function main() {
     try {
       webView.settings.setSupportMultipleWindows(false)
       webView.settings.javaScriptCanOpenWindowsAutomatically = true
-      webView.addJavascriptInterface(VeloraPrintInterface(webView), "__VELORA_NATIVE_PRINT__")
+      webView.settings.domStorageEnabled = true
+      webView.settings.databaseEnabled = true
+      webView.settings.allowFileAccess = true
+      webView.settings.allowContentAccess = true
+      webView.settings.setGeolocationEnabled(true)
+      val veloraBridge = VeloraPrintInterface(webView)
+      webView.addJavascriptInterface(veloraBridge, "__VELORA_NATIVE_PRINT__")
+
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        try {
+          val originalClient = webView.webViewClient
+          val interceptorClient = object : android.webkit.WebViewClient() {
+            private fun isExternalApp(urlStr: String?): Boolean {
+              if (urlStr.isNullOrBlank()) return false
+              val l = urlStr.lowercase()
+              return l.startsWith("whatsapp:") ||
+                     l.contains("wa.me/") ||
+                     l.contains("api.whatsapp.com/") ||
+                     l.contains("chat.whatsapp.com/") ||
+                     l.startsWith("intent:") ||
+                     l.startsWith("tel:") ||
+                     l.startsWith("mailto:") ||
+                     l.startsWith("sms:") ||
+                     l.startsWith("market:") ||
+                     l.startsWith("rawbt:") ||
+                     l.startsWith("printer:") ||
+                     l.startsWith("escpos:") ||
+                     l.startsWith("quickprinter:")
+            }
+
+            override fun shouldOverrideUrlLoading(view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?): Boolean {
+              val u = request?.url?.toString()
+              if (isExternalApp(u)) {
+                veloraBridge.openExternal(u)
+                return true
+              }
+              return try {
+                originalClient?.shouldOverrideUrlLoading(view, request) ?: super.shouldOverrideUrlLoading(view, request)
+              } catch (e: Exception) {
+                super.shouldOverrideUrlLoading(view, request)
+              }
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun shouldOverrideUrlLoading(view: android.webkit.WebView?, u: String?): Boolean {
+              if (isExternalApp(u)) {
+                veloraBridge.openExternal(u)
+                return true
+              }
+              return try {
+                originalClient?.shouldOverrideUrlLoading(view, u) ?: super.shouldOverrideUrlLoading(view, u)
+              } catch (e: Exception) {
+                super.shouldOverrideUrlLoading(view, u)
+              }
+            }
+
+            override fun shouldInterceptRequest(view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?): android.webkit.WebResourceResponse? {
+              return try {
+                originalClient?.shouldInterceptRequest(view, request) ?: super.shouldInterceptRequest(view, request)
+              } catch (e: Exception) {
+                super.shouldInterceptRequest(view, request)
+              }
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun shouldInterceptRequest(view: android.webkit.WebView?, u: String?): android.webkit.WebResourceResponse? {
+              return try {
+                originalClient?.shouldInterceptRequest(view, u) ?: super.shouldInterceptRequest(view, u)
+              } catch (e: Exception) {
+                super.shouldInterceptRequest(view, u)
+              }
+            }
+
+            override fun onPageFinished(view: android.webkit.WebView?, u: String?) {
+              try {
+                originalClient?.onPageFinished(view, u)
+              } catch (e: Exception) {
+                super.onPageFinished(view, u)
+              }
+            }
+
+            override fun onReceivedError(view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?, error: android.webkit.WebResourceError?) {
+              try {
+                originalClient?.onReceivedError(view, request, error)
+              } catch (e: Exception) {
+                super.onReceivedError(view, request, error)
+              }
+            }
+          }
+          webView.webViewClient = interceptorClient
+        } catch (eClient: Exception) {
+          android.util.Log.w("Velora", "Could not wrap WebViewClient: " + eClient.message)
+        }
+      }
 
       webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
         java.util.concurrent.Executors.newSingleThreadExecutor().execute {

@@ -180,7 +180,7 @@ struct MetadataConfig {
     company_name: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Default)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct DevicePermissionsConfig {
@@ -196,6 +196,19 @@ struct DevicePermissionsConfig {
     notifications: bool,
     #[serde(default = "default_true")]
     external_app_schemes: bool,
+}
+
+impl Default for DevicePermissionsConfig {
+    fn default() -> Self {
+        Self {
+            storage: true,
+            camera: false,
+            microphone: false,
+            geolocation: false,
+            notifications: true,
+            external_app_schemes: true,
+        }
+    }
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -818,23 +831,39 @@ fn android_navigation_script() -> String {
       lower.includes('response-content-disposition=attachment');
   }
 
+  function getNativeBridge() {
+    if (window.__VELORA_NATIVE_PRINT__ && typeof window.__VELORA_NATIVE_PRINT__.openExternal === 'function') {
+      return window.__VELORA_NATIVE_PRINT__;
+    }
+    try {
+      if (window.parent && window.parent.__VELORA_NATIVE_PRINT__ && typeof window.parent.__VELORA_NATIVE_PRINT__.openExternal === 'function') {
+        return window.parent.__VELORA_NATIVE_PRINT__;
+      }
+    } catch(e) {}
+    try {
+      if (window.top && window.top.__VELORA_NATIVE_PRINT__ && typeof window.top.__VELORA_NATIVE_PRINT__.openExternal === 'function') {
+        return window.top.__VELORA_NATIVE_PRINT__;
+      }
+    } catch(e) {}
+    return null;
+  }
+
   function handleExternalOrDownload(url) {
     if (!url || typeof url !== 'string') return false;
-    var nativeBridge = window.__VELORA_NATIVE_PRINT__;
+    var nativeBridge = getNativeBridge();
     var lower = url.toLowerCase();
 
-    if (lower.startsWith('whatsapp:') || lower.startsWith('intent:') || lower.startsWith('tel:') ||
+    var isWa = lower.startsWith('whatsapp:') ||
+      lower.includes('wa.me/') ||
+      lower.includes('api.whatsapp.com/') ||
+      lower.includes('chat.whatsapp.com/') ||
+      lower.includes('whatsapp.com/send');
+
+    if (isWa ||
+        lower.startsWith('intent:') || lower.startsWith('tel:') ||
         lower.startsWith('mailto:') || lower.startsWith('sms:') || lower.startsWith('market:') ||
         lower.startsWith('rawbt:') || lower.startsWith('printer:') || lower.startsWith('escpos:') ||
         lower.startsWith('quickprinter:')) {
-      if (nativeBridge && typeof nativeBridge.openExternal === 'function') {
-        nativeBridge.openExternal(url);
-        return true;
-      }
-      return false;
-    }
-
-    if (lower.includes('wa.me/') || lower.includes('api.whatsapp.com/')) {
       if (nativeBridge && typeof nativeBridge.openExternal === 'function') {
         nativeBridge.openExternal(url);
         return true;
@@ -855,6 +884,18 @@ fn android_navigation_script() -> String {
     return false;
   }
 
+  function resolveCustomUrl(el) {
+    if (!el) return null;
+    var custom = el.getAttribute('data-href') || el.getAttribute('data-url') || el.getAttribute('data-wa');
+    if (custom) return custom;
+    var phone = el.getAttribute('data-phone') || el.getAttribute('data-whatsapp') || el.getAttribute('data-wa-number');
+    if (phone) {
+      var msg = el.getAttribute('data-text') || el.getAttribute('data-message') || '';
+      return 'https://wa.me/' + phone + (msg ? '?text=' + encodeURIComponent(msg) : '');
+    }
+    return null;
+  }
+
   var origOpen = window.open;
   window.open = function(url, target, features) {
     if (!url) return null;
@@ -862,7 +903,7 @@ fn android_navigation_script() -> String {
     if (handleExternalOrDownload(strUrl)) {
       return null;
     }
-    var nativeBridge = window.__VELORA_NATIVE_PRINT__;
+    var nativeBridge = getNativeBridge();
     if (nativeBridge && typeof nativeBridge.openExternal === 'function') {
       nativeBridge.openExternal(strUrl);
       return null;
@@ -874,20 +915,56 @@ fn android_navigation_script() -> String {
     return null;
   };
 
-  document.addEventListener('click', function(e) {
-    var a = e.target && e.target.closest ? e.target.closest('a') : null;
-    if (!a || !a.href) return;
-    var href = a.href;
-    if (href.startsWith('javascript:') || href.startsWith('#')) return;
+  try {
+    var origAssign = window.location.assign;
+    window.location.assign = function(url) {
+      if (url && handleExternalOrDownload(String(url))) return;
+      if (origAssign) origAssign.call(window.location, url);
+      else window.location.href = url;
+    };
+  } catch(e) {}
 
-    if (handleExternalOrDownload(href)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
+  try {
+    var origReplace = window.location.replace;
+    window.location.replace = function(url) {
+      if (url && handleExternalOrDownload(String(url))) return;
+      if (origReplace) origReplace.call(window.location, url);
+      else window.location.href = url;
+    };
+  } catch(e) {}
+
+  document.addEventListener('click', function(e) {
+    var target = e.target;
+    var a = target && target.closest ? target.closest('a') : null;
+    if (a) {
+      var custom = resolveCustomUrl(a);
+      if (custom && handleExternalOrDownload(custom)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      var href = a.href;
+      if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+        if (handleExternalOrDownload(href)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        if (a.target === '_blank') {
+          a.removeAttribute('target');
+        }
+        return;
+      }
     }
 
-    if (a.target === '_blank') {
-      a.removeAttribute('target');
+    var btn = target && target.closest ? target.closest('button, [role="button"], [data-href], [data-url], [data-wa], [data-phone], [data-whatsapp]') : null;
+    if (btn) {
+      var customUrl = resolveCustomUrl(btn);
+      if (customUrl && handleExternalOrDownload(customUrl)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
     }
   }, true);
 
@@ -1157,10 +1234,17 @@ pub fn run() {
                 let _allow_storage = config.device_permissions.storage;
                 wb = wb.on_navigation(move |url| {
                     let scheme = url.scheme().to_lowercase();
-                    if scheme == "tel"
+                    let host = url.host_str().unwrap_or("").to_lowercase();
+                    let is_wa = scheme == "whatsapp"
+                        || host == "wa.me"
+                        || host.ends_with(".wa.me")
+                        || host == "api.whatsapp.com"
+                        || host == "chat.whatsapp.com";
+
+                    if is_wa
+                        || scheme == "tel"
                         || scheme == "mailto"
                         || scheme == "sms"
-                        || scheme == "whatsapp"
                         || scheme == "intent"
                         || scheme == "market"
                         || scheme == "rawbt"
@@ -1169,7 +1253,78 @@ pub fn run() {
                         || scheme == "quickprinter"
                     {
                         if allow_external_schemes {
-                            let u_str = url.as_str().to_string();
+                            #[allow(unused_mut)]
+                            let mut u_str = url.as_str().to_string();
+                            #[cfg(target_os = "android")]
+                            if is_wa {
+                                if host == "wa.me" || host.ends_with(".wa.me") {
+                                    let path = url.path().trim_start_matches('/');
+                                    let mut phone = String::new();
+                                    if !path.is_empty() && !path.starts_with("send") {
+                                        phone = path.to_string();
+                                    }
+                                    let mut text = String::new();
+                                    for (k, v) in url.query_pairs() {
+                                        if k == "phone" && phone.is_empty() {
+                                            phone = v.to_string();
+                                        } else if k == "text" {
+                                            text = v.to_string();
+                                        }
+                                    }
+                                    let clean_phone: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+                                    if !clean_phone.is_empty() || !text.is_empty() {
+                                        let mut wa_url = "whatsapp://send?".to_string();
+                                        if !clean_phone.is_empty() {
+                                            wa_url.push_str(&format!("phone={}", clean_phone));
+                                        }
+                                        if !text.is_empty() {
+                                            if !clean_phone.is_empty() {
+                                                wa_url.push('&');
+                                            }
+                                            wa_url.push_str("text=");
+                                            for byte in text.bytes() {
+                                                if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.' || byte == b'~' {
+                                                    wa_url.push(byte as char);
+                                                } else {
+                                                    wa_url.push_str(&format!("%{:02X}", byte));
+                                                }
+                                            }
+                                        }
+                                        u_str = wa_url;
+                                    }
+                                } else if host == "api.whatsapp.com" || host.ends_with(".whatsapp.com") {
+                                    let mut phone = String::new();
+                                    let mut text = String::new();
+                                    for (k, v) in url.query_pairs() {
+                                        if k == "phone" {
+                                            phone = v.to_string();
+                                        } else if k == "text" {
+                                            text = v.to_string();
+                                        }
+                                    }
+                                    let clean_phone: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+                                    if !clean_phone.is_empty() || !text.is_empty() {
+                                        let mut wa_url = "whatsapp://send?".to_string();
+                                        if !clean_phone.is_empty() {
+                                            wa_url.push_str(&format!("phone={}", clean_phone));
+                                        }
+                                        if !text.is_empty() {
+                                            if !clean_phone.is_empty() {
+                                                wa_url.push('&');
+                                            }
+                                            wa_url.push_str("text=");
+                                            for byte in text.bytes() {
+                                                if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.' || byte == b'~' {
+                                                    wa_url.push(byte as char);
+                                                } else {
+                                                    wa_url.push_str(&format!("%{:02X}", byte));
+                                                }
+                                            }
+                                        }
+                                        u_str = wa_url;
+                                    }
+                                }
+                            }
                             let h = handle.clone();
                             tauri::async_runtime::spawn(async move {
                                 let _ = h.opener().open_url(&u_str, None::<&str>);
