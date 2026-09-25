@@ -968,10 +968,119 @@ fn android_navigation_script() -> String {
     }
   }, true);
 
+  function enableIframeFullscreen(iframe) {
+    if (!iframe || !iframe.setAttribute) return;
+    try {
+      if (!iframe.hasAttribute('allowfullscreen')) {
+        iframe.setAttribute('allowfullscreen', 'true');
+      }
+      if (!iframe.hasAttribute('webkitallowfullscreen')) {
+        iframe.setAttribute('webkitallowfullscreen', 'true');
+      }
+      if (!iframe.hasAttribute('mozallowfullscreen')) {
+        iframe.setAttribute('mozallowfullscreen', 'true');
+      }
+      var allow = iframe.getAttribute('allow') || '';
+      var needed = ['fullscreen', 'autoplay', 'encrypted-media', 'picture-in-picture', 'accelerometer', 'gyroscope'];
+      var perms = allow.split(';').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+      var added = false;
+      needed.forEach(function(perm) {
+        if (!perms.some(function(p) { return p.indexOf(perm) !== -1; })) {
+          perms.push(perm);
+          added = true;
+        }
+      });
+      if (added || !allow) {
+        iframe.setAttribute('allow', perms.join('; '));
+      }
+    } catch(e) {}
+  }
+
+  function scanIframes() {
+    try {
+      var frames = document.querySelectorAll('iframe');
+      for (var i = 0; i < frames.length; i++) {
+        enableIframeFullscreen(frames[i]);
+      }
+    } catch(e) {}
+  }
+
+  try {
+    if (typeof MutationObserver !== 'undefined') {
+      var observer = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var m = mutations[i];
+          if (m.addedNodes) {
+            for (var j = 0; j < m.addedNodes.length; j++) {
+              var node = m.addedNodes[j];
+              if (node.nodeType === 1) {
+                if (node.tagName === 'IFRAME') {
+                  enableIframeFullscreen(node);
+                } else if (node.querySelectorAll) {
+                  var subFrames = node.querySelectorAll('iframe');
+                  for (var k = 0; k < subFrames.length; k++) {
+                    enableIframeFullscreen(subFrames[k]);
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+      if (document.documentElement || document.body) {
+        observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+      } else {
+        document.addEventListener('DOMContentLoaded', function() {
+          if (document.documentElement || document.body) {
+            observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+          }
+        });
+      }
+    }
+  } catch(e) {}
+
+  try {
+    if (typeof document !== 'undefined') {
+      if (!('fullscreenEnabled' in document) || !document.fullscreenEnabled) {
+        try {
+          Object.defineProperty(document, 'fullscreenEnabled', {
+            get: function() { return true; },
+            configurable: true
+          });
+        } catch(e) {}
+      }
+      if (!('webkitFullscreenEnabled' in document) || !document.webkitFullscreenEnabled) {
+        try {
+          Object.defineProperty(document, 'webkitFullscreenEnabled', {
+            get: function() { return true; },
+            configurable: true
+          });
+        } catch(e) {}
+      }
+    }
+    if (typeof Element !== 'undefined') {
+      if (!Element.prototype.requestFullscreen && Element.prototype.webkitRequestFullscreen) {
+        Element.prototype.requestFullscreen = Element.prototype.webkitRequestFullscreen;
+      }
+    }
+    if (typeof HTMLVideoElement !== 'undefined') {
+      if (!HTMLVideoElement.prototype.webkitEnterFullscreen) {
+        HTMLVideoElement.prototype.webkitEnterFullscreen = function() {
+          if (this.requestFullscreen) return this.requestFullscreen();
+          if (this.webkitRequestFullscreen) return this.webkitRequestFullscreen();
+        };
+      }
+    }
+  } catch(e) {}
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', applySafeViewport);
+    document.addEventListener('DOMContentLoaded', function() {
+      applySafeViewport();
+      scanIframes();
+    });
   } else {
     applySafeViewport();
+    scanIframes();
   }
 })()"#,
     )

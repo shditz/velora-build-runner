@@ -1302,15 +1302,28 @@ async function main() {
       val rootView = findViewById<android.view.View>(android.R.id.content)
       if (rootView != null) {
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(rootView) { v, insets ->
-          val systemBars = insets.getInsets(
-            androidx.core.view.WindowInsetsCompat.Type.systemBars() or
-            androidx.core.view.WindowInsetsCompat.Type.displayCutout()
-          )
-          v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+          if (customVideoView != null) {
+            v.setPadding(0, 0, 0, 0)
+          } else {
+            val systemBars = insets.getInsets(
+              androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+              androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )
+            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+          }
           insets
         }
         rootView.requestApplyInsets()
       }
+      onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+          if (!exitFullscreenVideo()) {
+            isEnabled = false
+            onBackPressedDispatcher.onBackPressed()
+            isEnabled = true
+          }
+        }
+      })
     } catch (e: Exception) {
       android.util.Log.w("Velora", "Failed to apply system insets: " + e.message)
     }
@@ -1340,6 +1353,58 @@ async function main() {
             if (!mainActivityContent.includes("onWebViewCreate")) {
               const printHookSnippet = `
   private var activePrintWebView: android.webkit.WebView? = null
+  private var customVideoView: android.view.View? = null
+  private var customVideoCallback: android.webkit.WebChromeClient.CustomViewCallback? = null
+  private var fullscreenContainer: android.widget.FrameLayout? = null
+  private var activeMainWebView: android.webkit.WebView? = null
+  private var originalOrientation: Int = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+
+  private fun exitFullscreenVideo(): Boolean {
+    if (customVideoView == null) return false
+    try {
+      this@MainActivity.runOnUiThread {
+        try {
+          val decor = window.decorView as? android.widget.FrameLayout
+          fullscreenContainer?.let { container ->
+            container.removeAllViews()
+            decor?.removeView(container)
+            container.visibility = android.view.View.GONE
+          }
+          customVideoView = null
+          try {
+            customVideoCallback?.onCustomViewHidden()
+          } catch (e: Exception) {}
+          customVideoCallback = null
+
+          activeMainWebView?.visibility = android.view.View.VISIBLE
+
+          val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+          insetsController?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+
+          val rootView = findViewById<android.view.View>(android.R.id.content)
+          rootView?.requestApplyInsets()
+
+          if (originalOrientation != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            requestedOrientation = originalOrientation
+          }
+        } catch (eInner: Exception) {
+          android.util.Log.e("VeloraFullscreen", "Error exiting fullscreen: " + eInner.message)
+        }
+      }
+      return true
+    } catch (e: Exception) {
+      android.util.Log.e("VeloraFullscreen", "Error exiting fullscreen: " + e.message)
+      return false
+    }
+  }
+
+  @Deprecated("Deprecated in Java")
+  override fun onBackPressed() {
+    if (exitFullscreenVideo()) {
+      return
+    }
+    super.onBackPressed()
+  }
 
   private fun saveBytesAndNotify(bytes: ByteArray, fileName: String, mimeType: String) {
     try {
@@ -1674,6 +1739,7 @@ async function main() {
 
   override fun onWebViewCreate(webView: android.webkit.WebView) {
     super.onWebViewCreate(webView)
+    activeMainWebView = webView
     try {
       webView.settings.setSupportMultipleWindows(false)
       webView.settings.javaScriptCanOpenWindowsAutomatically = true
@@ -1682,8 +1748,155 @@ async function main() {
       webView.settings.allowFileAccess = true
       webView.settings.allowContentAccess = true
       webView.settings.setGeolocationEnabled(true)
+      webView.settings.mediaPlaybackRequiresUserGesture = false
       val veloraBridge = VeloraPrintInterface(webView)
       webView.addJavascriptInterface(veloraBridge, "__VELORA_NATIVE_PRINT__")
+
+      try {
+        val originalChromeClient = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+          webView.webChromeClient
+        } else null
+
+        val customChromeClient = object : android.webkit.WebChromeClient() {
+          override fun onShowCustomView(view: android.view.View?, callback: CustomViewCallback?) {
+            if (view == null) return
+            if (customVideoView != null) {
+              exitFullscreenVideo()
+            }
+            this@MainActivity.runOnUiThread {
+              try {
+                customVideoView = view
+                customVideoCallback = callback
+                activeMainWebView = webView
+                originalOrientation = requestedOrientation
+
+                val decor = window.decorView as? android.widget.FrameLayout ?: return@runOnUiThread
+                if (fullscreenContainer == null) {
+                  fullscreenContainer = android.widget.FrameLayout(this@MainActivity).apply {
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                      android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                      android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                    setBackgroundColor(android.graphics.Color.BLACK)
+                  }
+                }
+                (fullscreenContainer?.parent as? android.view.ViewGroup)?.removeView(fullscreenContainer)
+                fullscreenContainer?.removeAllViews()
+                fullscreenContainer?.addView(
+                  view,
+                  android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.view.Gravity.CENTER
+                  )
+                )
+                decor.addView(fullscreenContainer)
+                fullscreenContainer?.visibility = android.view.View.VISIBLE
+
+                webView.visibility = android.view.View.GONE
+
+                val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+                insetsController?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                insetsController?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+              } catch (e: Exception) {
+                android.util.Log.e("VeloraFullscreen", "Error entering fullscreen: " + e.message)
+              }
+            }
+          }
+
+          @Deprecated("Deprecated in Java")
+          override fun onShowCustomView(view: android.view.View?, requestedOrientation: Int, callback: CustomViewCallback?) {
+            onShowCustomView(view, callback)
+          }
+
+          override fun onHideCustomView() {
+            exitFullscreenVideo()
+          }
+
+          override fun getVideoLoadingProgressView(): android.view.View? {
+            return try {
+              originalChromeClient?.videoLoadingProgressView ?: super.getVideoLoadingProgressView()
+            } catch (e: Exception) {
+              super.getVideoLoadingProgressView()
+            }
+          }
+
+          override fun getDefaultVideoPoster(): android.graphics.Bitmap? {
+            return try {
+              originalChromeClient?.defaultVideoPoster ?: super.getDefaultVideoPoster()
+            } catch (e: Exception) {
+              super.getDefaultVideoPoster()
+            }
+          }
+
+          override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
+            try {
+              if (originalChromeClient != null) {
+                originalChromeClient.onPermissionRequest(request)
+              } else {
+                request?.grant(request.resources)
+              }
+            } catch (e: Exception) {
+              super.onPermissionRequest(request)
+            }
+          }
+
+          override fun onPermissionRequestCanceled(request: android.webkit.PermissionRequest?) {
+            try {
+              originalChromeClient?.onPermissionRequestCanceled(request) ?: super.onPermissionRequestCanceled(request)
+            } catch (e: Exception) {
+              super.onPermissionRequestCanceled(request)
+            }
+          }
+
+          override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: android.webkit.GeolocationPermissions.Callback?) {
+            try {
+              if (originalChromeClient != null) {
+                originalChromeClient.onGeolocationPermissionsShowPrompt(origin, callback)
+              } else {
+                callback?.invoke(origin, true, false)
+              }
+            } catch (e: Exception) {
+              super.onGeolocationPermissionsShowPrompt(origin, callback)
+            }
+          }
+
+          override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
+            return try {
+              originalChromeClient?.onConsoleMessage(consoleMessage) ?: super.onConsoleMessage(consoleMessage)
+            } catch (e: Exception) {
+              super.onConsoleMessage(consoleMessage)
+            }
+          }
+
+          override fun onJsAlert(view: android.webkit.WebView?, url: String?, message: String?, result: android.webkit.JsResult?): Boolean {
+            return try {
+              originalChromeClient?.onJsAlert(view, url, message, result) ?: super.onJsAlert(view, url, message, result)
+            } catch (e: Exception) {
+              super.onJsAlert(view, url, message, result)
+            }
+          }
+
+          override fun onJsConfirm(view: android.webkit.WebView?, url: String?, message: String?, result: android.webkit.JsResult?): Boolean {
+            return try {
+              originalChromeClient?.onJsConfirm(view, url, message, result) ?: super.onJsConfirm(view, url, message, result)
+            } catch (e: Exception) {
+              super.onJsConfirm(view, url, message, result)
+            }
+          }
+
+          override fun onJsPrompt(view: android.webkit.WebView?, url: String?, message: String?, defaultValue: String?, result: android.webkit.JsPromptResult?): Boolean {
+            return try {
+              originalChromeClient?.onJsPrompt(view, url, message, defaultValue, result) ?: super.onJsPrompt(view, url, message, defaultValue, result)
+            } catch (e: Exception) {
+              super.onJsPrompt(view, url, message, defaultValue, result)
+            }
+          }
+        }
+        webView.webChromeClient = customChromeClient
+      } catch (eChrome: Exception) {
+        android.util.Log.w("Velora", "Could not set WebChromeClient: " + eChrome.message)
+      }
 
       if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
         try {
@@ -1833,8 +2046,10 @@ async function main() {
 
   override fun onDestroy() {
     try {
+      exitFullscreenVideo()
       activePrintWebView?.destroy()
       activePrintWebView = null
+      activeMainWebView = null
     } catch (e: Exception) {}
     super.onDestroy()
   }
