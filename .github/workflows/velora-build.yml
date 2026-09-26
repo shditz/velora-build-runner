@@ -93,15 +93,43 @@ jobs:
             status = "COMPILING"
           } | ConvertTo-Json -Compress
           curl.exe -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$compilePayload" || true
-          npx --yes @tauri-apps/cli@^2 build --bundles nsis,msi
+
+          $targetFormat = ""
+          try {
+            $rawConfig = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:CONFIG_JSON_BASE64)) | ConvertFrom-Json
+            if ($rawConfig.targetFormat) { $targetFormat = $rawConfig.targetFormat.ToLower() }
+          } catch {}
+
+          if ($targetFormat -eq "msix") {
+            Write-Host "Compiling Windows MSIX store package..."
+            npx --yes @tauri-apps/cli@^2 build --bundles msix
+          } else {
+            Write-Host "Compiling Windows desktop installers (.exe / .msi)..."
+            npx --yes @tauri-apps/cli@^2 build --bundles nsis,msi
+          }
 
       - name: Upload Artifact Callback
         if: success()
         shell: pwsh
         run: |
-          $artifact = Get-ChildItem -Path "packages/tauri-template/src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          $targetFormat = ""
+          try {
+            $rawConfig = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:CONFIG_JSON_BASE64)) | ConvertFrom-Json
+            if ($rawConfig.targetFormat) { $targetFormat = $rawConfig.targetFormat.ToLower() }
+          } catch {}
+
+          $artifact = $null
+          if ($targetFormat -eq "msix") {
+            $artifact = Get-ChildItem -Path "packages/tauri-template/src-tauri/target/release/bundle/msix/*.msix" 2>$null | Select-Object -First 1
+            if (-not $artifact) {
+              $artifact = Get-ChildItem -Path "packages/tauri-template/src-tauri/target/release/bundle/appx/*.msix" 2>$null | Select-Object -First 1
+            }
+          }
           if (-not $artifact) {
-            $artifact = Get-ChildItem -Path "packages/tauri-template/src-tauri/target/release/*.exe" | Select-Object -First 1
+            $artifact = Get-ChildItem -Path "packages/tauri-template/src-tauri/target/release/bundle/nsis/*.exe" 2>$null | Select-Object -First 1
+          }
+          if (-not $artifact) {
+            $artifact = Get-ChildItem -Path "packages/tauri-template/src-tauri/target/release/*.exe" 2>$null | Select-Object -First 1
           }
           $sha256 = (Get-FileHash -Path $artifact.FullName -Algorithm SHA256).Hash.ToLower()
           $filename = $artifact.Name
@@ -186,21 +214,38 @@ jobs:
           PROJECT_ID: ${{ inputs.project_id }}
         run: node packages/tauri-template/scripts/render-ci-config.js
 
-      - name: Compile Native macOS Binary (.dmg)
+      - name: Compile Native macOS Binary
         working-directory: packages/tauri-template
         run: |
           curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d '{"build_id":"${{ inputs.build_id }}","project_id":"${{ inputs.project_id }}","platform":"macos","status":"COMPILING"}' || true
-          npx --yes @tauri-apps/cli@^2 build --bundles dmg
+
+          TARGET_FORMAT=$(node -e "try { const c = JSON.parse(Buffer.from(process.env.CONFIG_JSON_BASE64, 'base64').toString('utf8')); console.log((c.targetFormat || '').toLowerCase()); } catch { console.log(''); }" 2>/dev/null || echo "")
+
+          if [ "$TARGET_FORMAT" = "pkg" ]; then
+            echo "Compiling macOS PKG store package with App Sandbox..."
+            npx --yes @tauri-apps/cli@^2 build --bundles pkg
+          else
+            echo "Compiling macOS DMG disk image..."
+            npx --yes @tauri-apps/cli@^2 build --bundles dmg
+          fi
 
       - name: Upload Artifact Callback
         if: success()
         run: |
-          DMG_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -n 1)
-          if [ -z "$DMG_FILE" ]; then
-            DMG_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle -name "*.dmg" 2>/dev/null | head -n 1)
+          TARGET_FORMAT=$(node -e "try { const c = JSON.parse(Buffer.from(process.env.CONFIG_JSON_BASE64, 'base64').toString('utf8')); console.log((c.targetFormat || '').toLowerCase()); } catch { console.log(''); }" 2>/dev/null || echo "")
+
+          DMG_FILE=""
+          if [ "$TARGET_FORMAT" = "pkg" ]; then
+            DMG_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/pkg -name "*.pkg" 2>/dev/null | head -n 1)
           fi
           if [ -z "$DMG_FILE" ]; then
-            echo "Error: No macOS DMG file found."
+            DMG_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$DMG_FILE" ]; then
+            DMG_FILE=$(find packages/tauri-template/src-tauri/target/release/bundle -name "*.dmg" -o -name "*.pkg" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$DMG_FILE" ]; then
+            echo "Error: No macOS package (.dmg or .pkg) file found."
             exit 1
           fi
 
@@ -396,7 +441,7 @@ jobs:
           PROJECT_ID: ${{ inputs.project_id }}
         run: node packages/tauri-template/scripts/render-ci-config.js
 
-      - name: Compile Android APK Release
+      - name: Compile Android Release Package
         working-directory: packages/tauri-template
         env:
           CONFIG_JSON_BASE64: ${{ inputs.config_json }}
@@ -409,9 +454,18 @@ jobs:
             npx --yes @tauri-apps/cli@^2 android init
           fi
           node scripts/render-ci-config.js
-          npx --yes @tauri-apps/cli@^2 android build --apk
 
-      - name: Sign Android APK with Release Keystore
+          TARGET_FORMAT=$(node -e "try { const c = JSON.parse(Buffer.from(process.env.CONFIG_JSON_BASE64, 'base64').toString('utf8')); console.log((c.targetFormat || '').toLowerCase()); } catch { console.log(''); }" 2>/dev/null || echo "")
+
+          if [ "$TARGET_FORMAT" = "aab" ]; then
+            echo "Compiling Android App Bundle (.aab) for Google Play Store..."
+            npx --yes @tauri-apps/cli@^2 android build --aab
+          else
+            echo "Compiling Android APK release..."
+            npx --yes @tauri-apps/cli@^2 android build --apk
+          fi
+
+      - name: Sign Android Package with Release Keystore
         working-directory: packages/tauri-template
         env:
           CONFIG_JSON_BASE64: ${{ inputs.config_json }}
@@ -419,17 +473,10 @@ jobs:
           CALLBACK_SECRET: ${{ inputs.callback_secret }}
           PROJECT_ID: ${{ inputs.project_id }}
         run: |
+          TARGET_FORMAT=$(node -e "try { const c = JSON.parse(Buffer.from(process.env.CONFIG_JSON_BASE64, 'base64').toString('utf8')); console.log((c.targetFormat || '').toLowerCase()); } catch { console.log(''); }" 2>/dev/null || echo "")
+
           BUILD_TOOLS_DIR=$(find $ANDROID_HOME/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           echo "Using Android Build Tools: $BUILD_TOOLS_DIR"
-
-          UNSIGNED_APK=$(find src-tauri/gen/android -name "*unsigned*.apk" 2>/dev/null | head -n 1)
-          if [ -z "$UNSIGNED_APK" ]; then
-            UNSIGNED_APK=$(find src-tauri/gen/android -name "*.apk" 2>/dev/null | head -n 1)
-          fi
-          if [ -z "$UNSIGNED_APK" ]; then
-            echo "Error: No APK file found to sign."
-            exit 1
-          fi
 
           echo "Checking for existing persistent project release keystore..."
           KEYSTORE_FILE="velora-release.keystore"
@@ -461,43 +508,77 @@ jobs:
             fi
           fi
 
-          echo "Aligning APK..."
-          $BUILD_TOOLS_DIR/zipalign -f -p 4 "$UNSIGNED_APK" aligned-app.apk
-
           APP_NAME=$(node -e "try { const c = JSON.parse(Buffer.from(process.env.CONFIG_JSON_BASE64, 'base64').toString('utf8')); console.log((c.appName || c.name || 'App').replace(/[^a-zA-Z0-9_-]/g, '')); } catch { console.log('App'); }" 2>/dev/null || echo "App")
           if [ -z "$APP_NAME" ]; then APP_NAME="App"; fi
-          FINAL_APK="src-tauri/gen/android/${APP_NAME}.apk"
 
-          echo "Signing APK with apksigner (v1, v2, v3 schemes) -> $FINAL_APK..."
-          $BUILD_TOOLS_DIR/apksigner sign --ks "$KEYSTORE_FILE" --ks-pass pass:velora123 --key-pass pass:velora123 --out "$FINAL_APK" aligned-app.apk
+          if [ "$TARGET_FORMAT" = "aab" ]; then
+            UNSIGNED_AAB=$(find src-tauri/gen/android -name "*.aab" 2>/dev/null | head -n 1)
+            if [ -z "$UNSIGNED_AAB" ]; then
+              echo "Error: No AAB file found to sign."
+              exit 1
+            fi
+            FINAL_AAB="src-tauri/gen/android/${APP_NAME}.aab"
+            cp "$UNSIGNED_AAB" "$FINAL_AAB"
+            echo "Signing Android App Bundle with jarsigner -> $FINAL_AAB..."
+            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 -keystore "$KEYSTORE_FILE" -storepass velora123 -keypass velora123 "$FINAL_AAB" velora
+            echo "Verifying signed AAB..."
+            jarsigner -verify -verbose "$FINAL_AAB"
+            echo "Signed Google Play Store AAB ready: $FINAL_AAB"
+          else
+            UNSIGNED_APK=$(find src-tauri/gen/android -name "*unsigned*.apk" 2>/dev/null | head -n 1)
+            if [ -z "$UNSIGNED_APK" ]; then
+              UNSIGNED_APK=$(find src-tauri/gen/android -name "*.apk" 2>/dev/null | head -n 1)
+            fi
+            if [ -z "$UNSIGNED_APK" ]; then
+              echo "Error: No APK file found to sign."
+              exit 1
+            fi
 
-          echo "Verifying signed APK..."
-          $BUILD_TOOLS_DIR/apksigner verify --verbose "$FINAL_APK"
-          echo "Signed APK ready: $FINAL_APK"
+            echo "Aligning APK..."
+            $BUILD_TOOLS_DIR/zipalign -f -p 4 "$UNSIGNED_APK" aligned-app.apk
+
+            FINAL_APK="src-tauri/gen/android/${APP_NAME}.apk"
+
+            echo "Signing APK with apksigner (v1, v2, v3 schemes) -> $FINAL_APK..."
+            $BUILD_TOOLS_DIR/apksigner sign --ks "$KEYSTORE_FILE" --ks-pass pass:velora123 --key-pass pass:velora123 --out "$FINAL_APK" aligned-app.apk
+
+            echo "Verifying signed APK..."
+            $BUILD_TOOLS_DIR/apksigner verify --verbose "$FINAL_APK"
+            echo "Signed APK ready: $FINAL_APK"
+          fi
 
       - name: Upload Artifact Callback
         if: success()
         run: |
-          APK_FILE=$(find packages/tauri-template/src-tauri/gen/android -name "*.apk" ! -name "*unsigned*" ! -name "aligned*" 2>/dev/null | head -n 1)
-          if [ -z "$APK_FILE" ]; then
-            APK_FILE=$(find packages/tauri-template/src-tauri/gen/android -name "*.apk" 2>/dev/null | head -n 1)
+          TARGET_FORMAT=$(node -e "try { const c = JSON.parse(Buffer.from(process.env.CONFIG_JSON_BASE64, 'base64').toString('utf8')); console.log((c.targetFormat || '').toLowerCase()); } catch { console.log(''); }" 2>/dev/null || echo "")
+
+          if [ "$TARGET_FORMAT" = "aab" ]; then
+            ARTIFACT_FILE=$(find packages/tauri-template/src-tauri/gen/android -name "*.aab" 2>/dev/null | head -n 1)
+            CONTENT_TYPE="application/octet-stream"
+          else
+            ARTIFACT_FILE=$(find packages/tauri-template/src-tauri/gen/android -name "*.apk" ! -name "*unsigned*" ! -name "aligned*" 2>/dev/null | head -n 1)
+            if [ -z "$ARTIFACT_FILE" ]; then
+              ARTIFACT_FILE=$(find packages/tauri-template/src-tauri/gen/android -name "*.apk" 2>/dev/null | head -n 1)
+            fi
+            CONTENT_TYPE="application/vnd.android.package-archive"
           fi
-          if [ -z "$APK_FILE" ]; then
-            echo "Error: No APK file generated."
+
+          if [ -z "$ARTIFACT_FILE" ]; then
+            echo "Error: No package file generated."
             exit 1
           fi
-          SHA256=$(sha256sum "$APK_FILE" | awk '{print $1}')
-          FILENAME=$(basename "$APK_FILE")
+          SHA256=$(sha256sum "$ARTIFACT_FILE" | awk '{print $1}')
+          FILENAME=$(basename "$ARTIFACT_FILE")
           ENCODED_FILENAME=$(node -e "console.log(encodeURIComponent(process.argv[1]))" "$FILENAME")
-          FILESIZE=$(stat -c%s "$APK_FILE" 2>/dev/null || wc -c < "$APK_FILE" | tr -d ' ')
+          FILESIZE=$(stat -c%s "$ARTIFACT_FILE" 2>/dev/null || wc -c < "$ARTIFACT_FILE" | tr -d ' ')
 
           UPLOAD_DATA=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -H "x-velora-secret: ${{ inputs.callback_secret }}" "${{ inputs.callback_url }}?action=get_upload_url&build_id=${{ inputs.build_id }}&filename=$ENCODED_FILENAME")
           UPLOAD_URL=$(node -e "try { console.log(JSON.parse(process.argv[1]).uploadUrl || '') } catch { console.log('') }" "$UPLOAD_DATA")
           STORAGE_KEY=$(node -e "try { console.log(JSON.parse(process.argv[1]).storageKey || '') } catch { console.log('') }" "$UPLOAD_DATA")
 
           if [ -n "$UPLOAD_URL" ] && [ "$UPLOAD_URL" != "null" ]; then
-            echo "Uploading Android APK directly to S3 via presigned PUT ($FILESIZE bytes)..."
-            curl -s -S -X PUT -T "$APK_FILE" -H "Content-Type: application/vnd.android.package-archive" "$UPLOAD_URL"
+            echo "Uploading Android package directly to S3 via presigned PUT ($FILESIZE bytes)..."
+            curl -s -S -X PUT -T "$ARTIFACT_FILE" -H "Content-Type: $CONTENT_TYPE" "$UPLOAD_URL"
             BODY=$(node -e "console.log(JSON.stringify({ build_id: '${{ inputs.build_id }}', project_id: '${{ inputs.project_id }}', platform: 'android', status: 'COMPLETED', sha256: process.argv[1], storage_key: process.argv[2], filename: process.argv[3], size: Number(process.argv[4]) }))" "$SHA256" "$STORAGE_KEY" "$FILENAME" "$FILESIZE")
             curl -s -S -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" -X POST "${{ inputs.callback_url }}" -H "Content-Type: application/json" -H "x-velora-secret: ${{ inputs.callback_secret }}" -d "$BODY"
           else
@@ -509,7 +590,7 @@ jobs:
               -F "platform=android" \
               -F "status=COMPLETED" \
               -F "sha256=$SHA256" \
-              -F "artifact=@$APK_FILE;filename=$FILENAME"
+              -F "artifact=@$ARTIFACT_FILE;filename=$FILENAME"
           fi
 
       - name: Report Build Failure Callback

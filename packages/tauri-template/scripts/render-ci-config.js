@@ -777,6 +777,13 @@ async function main() {
       conf.bundle.windows.nsis.installerIcon = "icons/icon.ico";
       conf.bundle.windows.nsis.uninstallerIcon = "icons/icon.ico";
 
+      const targetFormat = (payload.targetFormat || "").toLowerCase();
+      if (targetFormat === "msix") {
+        if (!conf.bundle.windows) conf.bundle.windows = {};
+        if (!conf.bundle.windows.appx) conf.bundle.windows.appx = {};
+        conf.bundle.windows.appx.publisher = conf.bundle.publisher || `CN=${appName.replace(/[^a-zA-Z0-9]/g, "") || "Velora"}`;
+      }
+
       const devPerms = payload.devicePermissions || payload.appConfig?.devicePermissions || {};
       if (devPerms.camera || devPerms.microphone || devPerms.geolocation) {
         if (!conf.bundle.macOS) conf.bundle.macOS = {};
