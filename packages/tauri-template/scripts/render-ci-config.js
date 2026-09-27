@@ -34,6 +34,87 @@ function ensureRgbaPng(filePath) {
   }
 }
 
+function sanitizeProductName(rawName, websiteUrl) {
+  let name = (rawName || "").trim();
+
+  const formatBrand = (b) => {
+    if (!b) return "App";
+    const words = b.replace(/[-_/:*?"<>|\\]/g, " ").split(/\s+/).filter(Boolean);
+    return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+  };
+
+  // If name is or contains a URL protocol scheme (e.g. "https://app.veloradev.site/analytics")
+  if (/^https?:\/\//i.test(name) || name.includes("://")) {
+    try {
+      const parsed = new URL(name.startsWith("http") ? name : `https://${name}`);
+      const hostParts = parsed.hostname.replace(/^www\./i, "").split(".");
+      let brand = "";
+      if (hostParts.length > 2 && /^(app|dashboard|my|portal|cloud|admin)$/i.test(hostParts[0])) {
+        brand = hostParts[1];
+      } else if (hostParts.length >= 2) {
+        brand = hostParts[hostParts.length - 2];
+      } else {
+        brand = hostParts[0];
+      }
+      const capBrand = formatBrand(brand);
+
+      const pathSegments = parsed.pathname.split("/").filter(Boolean);
+      const lastSegment = pathSegments[pathSegments.length - 1];
+      let capSegment = "";
+      if (
+        lastSegment &&
+        lastSegment.length >= 2 &&
+        !/^(index|home|main|app|v\d+|en|id|api|dashboard)$/i.test(lastSegment)
+      ) {
+        capSegment = formatBrand(lastSegment);
+      }
+
+      if (capBrand && capSegment && capBrand.toLowerCase() !== capSegment.toLowerCase()) {
+        name = `${capBrand} ${capSegment}`;
+      } else if (capBrand) {
+        name = capBrand;
+      } else if (capSegment) {
+        name = capSegment;
+      }
+    } catch {
+      name = name.replace(/^https?:\/\//i, "").replace(/[\/:*?"<>|\\]+/g, " ");
+    }
+  }
+
+  // Strip all Tauri-forbidden characters: / \ : * ? " < > |
+  name = name.replace(/[\/:*?"<>|\\]+/g, " ");
+  name = name.replace(/\s+/g, " ").trim();
+
+  if (!name && websiteUrl) {
+    try {
+      const parsed = new URL(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`);
+      const hostParts = parsed.hostname.replace(/^www\./i, "").split(".");
+      let brand = "";
+      if (hostParts.length > 2 && /^(app|dashboard|my|portal|cloud|admin)$/i.test(hostParts[0])) {
+        brand = hostParts[1];
+      } else if (hostParts.length >= 2) {
+        brand = hostParts[hostParts.length - 2];
+      } else {
+        brand = hostParts[0];
+      }
+      if (brand) {
+        name = formatBrand(brand);
+      }
+    } catch {}
+  }
+
+  if (!name) {
+    name = "Velora App";
+  }
+
+  if (name.length > 64) {
+    name = name.slice(0, 64).trim();
+  }
+
+  name = name.replace(/[\/:*?"<>|\\]+/g, "").trim();
+  return name || "Velora App";
+}
+
 function renderIndexHtml(splash, websiteUrl, appName) {
   const bgType = splash.bgType || "solid";
   const gradPreset = splash.gradientPreset || "obsidian-violet";
@@ -447,20 +528,6 @@ async function main() {
     console.error("[RenderConfig] Failed to parse config JSON:", err);
   }
 
-  const appName =
-    (payload.appName || payload.appConfig?.appName || payload.name || "Velora App")
-      .replace(/["\\]/g, "")
-      .trim() || "Velora App";
-  const version = (payload.version || payload.appConfig?.version || "1.0.0").trim();
-  const rawBundleId = (payload.bundleId || payload.appConfig?.bundleId || "").trim();
-  const safeSlug =
-    (payload.slug || payload.appConfig?.slug || appName).toLowerCase().replace(/[^a-z0-9]/g, "") ||
-    "app";
-  const bundleId =
-    rawBundleId && rawBundleId !== "com.velora.application"
-      ? rawBundleId
-      : `com.velora.${safeSlug}`;
-
   let websiteUrl =
     payload.websiteUrl ||
     payload.url ||
@@ -481,6 +548,21 @@ async function main() {
     );
     websiteUrl = "https://veloradev.site";
   }
+
+  const rawAppName =
+    (payload.appName || payload.appConfig?.appName || payload.name || "Velora App")
+      .replace(/["\\]/g, "")
+      .trim();
+  const appName = sanitizeProductName(rawAppName, websiteUrl);
+  const version = (payload.version || payload.appConfig?.version || "1.0.0").trim();
+  const rawBundleId = (payload.bundleId || payload.appConfig?.bundleId || "").trim();
+  const safeSlug =
+    (payload.slug || payload.appConfig?.slug || appName).toLowerCase().replace(/[^a-z0-9]/g, "") ||
+    "app";
+  const bundleId =
+    rawBundleId && rawBundleId !== "com.velora.application"
+      ? rawBundleId
+      : `com.velora.${safeSlug}`;
 
   const projectId =
     payload.projectId || payload.project_id || payload.appConfig?.projectId || projectIdArg;
@@ -754,11 +836,20 @@ async function main() {
   if (fs.existsSync(tauriConfPath)) {
     try {
       const conf = JSON.parse(fs.readFileSync(tauriConfPath, "utf8"));
-      conf.productName = appName;
+      const safeProductName = sanitizeProductName(appName, websiteUrl);
+      conf.productName = safeProductName;
+      if (!conf.productName || !/^[^/:*?"<>|]+$/.test(conf.productName)) {
+        console.warn(`[RenderConfig] WARNING: productName "${conf.productName}" is invalid for Tauri schema, resetting to safe fallback`);
+        conf.productName = "VeloraApp";
+      }
       conf.version = version;
       conf.identifier = bundleId;
 
-      const safeBinaryName = appName.replace(/[^a-zA-Z0-9_-]/g, "") || "app";
+      const safeBinaryName =
+        safeProductName
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]/g, "")
+          .replace(/^[^a-z]+/, "") || "app";
       conf.mainBinaryName = safeBinaryName;
 
       if (!conf.app) conf.app = {};
@@ -801,7 +892,7 @@ async function main() {
 
       fs.writeFileSync(tauriConfPath, JSON.stringify(conf, null, 2), "utf8");
       console.log(
-        `[RenderConfig] Updated tauri.conf.json productName: "${appName}", mainBinaryName: "${safeBinaryName}", version: "${version}", identifier: "${bundleId}"`,
+        `[RenderConfig] Updated tauri.conf.json productName: "${conf.productName}", mainBinaryName: "${safeBinaryName}", version: "${version}", identifier: "${bundleId}"`,
       );
     } catch (err) {
       console.error("[RenderConfig] Failed to update tauri.conf.json:", err);
