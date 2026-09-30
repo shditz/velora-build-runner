@@ -1015,6 +1015,92 @@ async function main() {
   if (platform === "android") {
     const androidGenDir = path.join(srcTauriDir, "gen", "android");
 
+    if (fs.existsSync(androidGenDir)) {
+      try {
+        // Gradle buildSrc and settings.gradle repository hardening
+        const buildSrcDir = path.join(androidGenDir, "buildSrc");
+        if (!fs.existsSync(buildSrcDir)) {
+          fs.mkdirSync(buildSrcDir, { recursive: true });
+        }
+        const buildSrcSettingsPath = path.join(buildSrcDir, "settings.gradle.kts");
+        const buildSrcSettingsContent = `pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+`;
+        fs.writeFileSync(buildSrcSettingsPath, buildSrcSettingsContent, "utf8");
+        console.log(
+          `[RenderConfig] Injected pluginManagement into ${path.relative(templateRoot, buildSrcSettingsPath)}`,
+        );
+
+        const buildSrcBuildPath = path.join(buildSrcDir, "build.gradle.kts");
+        if (fs.existsSync(buildSrcBuildPath)) {
+          let bContent = fs.readFileSync(buildSrcBuildPath, "utf8");
+          if (!bContent.includes("buildscript")) {
+            bContent = `buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+` + bContent;
+          }
+          if (!bContent.includes("gradlePluginPortal()")) {
+            bContent = bContent.replace(
+              /repositories\s*\{([^}]+)\}/s,
+              () => `repositories {\n    google()\n    mavenCentral()\n    gradlePluginPortal()\n}`,
+            );
+          }
+          fs.writeFileSync(buildSrcBuildPath, bContent, "utf8");
+          console.log(
+            `[RenderConfig] Hardened repositories in ${path.relative(templateRoot, buildSrcBuildPath)}`,
+          );
+        }
+
+        const settingsGradlePath = path.join(androidGenDir, "settings.gradle");
+        if (fs.existsSync(settingsGradlePath)) {
+          let sContent = fs.readFileSync(settingsGradlePath, "utf8");
+          if (!sContent.includes("pluginManagement")) {
+            sContent = `pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+` + sContent;
+            fs.writeFileSync(settingsGradlePath, sContent, "utf8");
+            console.log(
+              `[RenderConfig] Injected pluginManagement into ${path.relative(templateRoot, settingsGradlePath)}`,
+            );
+          }
+        }
+
+        const rootBuildGradlePath = path.join(androidGenDir, "build.gradle.kts");
+        if (fs.existsSync(rootBuildGradlePath)) {
+          let rContent = fs.readFileSync(rootBuildGradlePath, "utf8");
+          if (!rContent.includes("gradlePluginPortal()")) {
+            rContent = rContent.replace(
+              /repositories\s*\{([^}]+)\}/g,
+              () => `repositories {\n        google()\n        mavenCentral()\n        gradlePluginPortal()\n    }`,
+            );
+            fs.writeFileSync(rootBuildGradlePath, rContent, "utf8");
+            console.log(
+              `[RenderConfig] Hardened repositories in ${path.relative(templateRoot, rootBuildGradlePath)}`,
+            );
+          }
+        }
+      } catch (gradleErr) {
+        console.warn("[RenderConfig] Warning: Failed to patch Android Gradle repositories:", gradleErr);
+      }
+    }
+
     function findAndroidMainDirs(baseDir) {
       const results = [];
       if (!fs.existsSync(baseDir)) return results;

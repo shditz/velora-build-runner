@@ -3,3 +3,41 @@ dist/
 target/
 .turbo/
 *.log
+src-tauri/target/
+src-tauri/gen/
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.deb
+*.apk
+*.aab
+*.ipa
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Temporary build workspace
+scratch/
+.playwright-mcp/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Internal docs & AI directives
+AGENTS.md
+DEPLOY_GUIDE.md
+HOW_TO_RUN.md
+HOW_TO_RUN.en.md
+.agents/

@@ -453,6 +453,18 @@ jobs:
           if [ ! -d "src-tauri/gen/android" ]; then
             npx --yes @tauri-apps/cli@^2 android init
           fi
+
+          mkdir -p src-tauri/gen/android/buildSrc
+          cat << 'EOF' > src-tauri/gen/android/buildSrc/settings.gradle.kts
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+EOF
+
           node scripts/render-ci-config.js
 
           TARGET_FORMAT=$(node -e "try { const c = JSON.parse(Buffer.from(process.env.CONFIG_JSON_BASE64, 'base64').toString('utf8')); console.log((c.targetFormat || '').toLowerCase()); } catch { console.log(''); }" 2>/dev/null || echo "")
