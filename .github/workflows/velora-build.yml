@@ -455,15 +455,7 @@ jobs:
           fi
 
           mkdir -p src-tauri/gen/android/buildSrc
-          cat << 'EOF' > src-tauri/gen/android/buildSrc/settings.gradle.kts
-pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
-EOF
+          printf "pluginManagement {\n    repositories {\n        google()\n        mavenCentral()\n        gradlePluginPortal()\n    }\n}\n" > src-tauri/gen/android/buildSrc/settings.gradle.kts
 
           node scripts/render-ci-config.js
 
